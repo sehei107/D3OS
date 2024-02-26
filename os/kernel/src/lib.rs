@@ -19,6 +19,7 @@ use crate::device::serial;
 use crate::device::serial::{BaudRate, ComPort, SerialPort};
 use crate::device::speaker::Speaker;
 use crate::device::terminal::Terminal;
+use crate::device::ihda::IHDA;
 use crate::memory::alloc::{AcpiHandler, KernelAllocator};
 use crate::interrupt::interrupt_dispatcher::InterruptDispatcher;
 use crate::log::Logger;
@@ -111,6 +112,7 @@ static SERIAL_PORT: Once<SerialPort> = Once::new();
 static TERMINAL: Once<LFBTerminal> = Once::new();
 static PS2: Once<PS2> = Once::new();
 static PCI: Once<PciBus> = Once::new();
+static IHDA: Once<IHDA> = Once::new();
 
 pub fn init_efi_system_table(table: SystemTable<Runtime>) {
     EFI_SYSTEM_TABLE.call_once(|| EfiSystemTable::new(table));
@@ -173,6 +175,10 @@ pub fn init_keyboard() {
 
 pub fn init_pci() {
     PCI.call_once(|| PciBus::scan());
+}
+
+pub fn init_ihda() {
+    IHDA.call_once(|| IHDA::new());
 }
 
 pub fn init_initrd(module: &ModuleTag) {
