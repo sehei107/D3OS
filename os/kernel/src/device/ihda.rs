@@ -1,10 +1,14 @@
+use alloc::boxed::Box;
+use core::arch::asm;
 use core::ops::BitOr;
 use log::debug;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
-use crate::pci_bus;
+use crate::interrupt::interrupt_handler::InterruptHandler;
+use crate::{apic, interrupt_dispatcher, pci_bus};
+use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
 use crate::process::process::current_process;
 
@@ -13,6 +17,15 @@ const PCI_IHDA_DEVICE:  SubClass = 3;
 
 pub struct IHDA {
     mmio_address: u32,
+}
+
+#[derive(Default)]
+struct IHDAInterruptHandler;
+
+impl InterruptHandler for IHDAInterruptHandler {
+    fn trigger(&mut self) {
+        debug!("INTERRUPT!!!");
+    }
 }
 
 impl IHDA {
@@ -39,6 +52,15 @@ impl IHDA {
                     let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
                     let address_space = current_process().address_space();
                     address_space.map(PageRange { start: mmio_page, end: mmio_page + pages as u64 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
+
+                    // setup interrupt line
+                    const CPU_EXCEPTION_OFFSET: u8 = 32;
+                    let (_, interrupt_line) = device.interrupt(pci.config_space());
+                    let interrupt_vector = InterruptVector::try_from(CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
+                    interrupt_dispatcher().assign(interrupt_vector, Box::new(IHDAInterruptHandler::default()));
+                    apic().allow(interrupt_vector);
+                    // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
+                    // will now result in a call of IHDAInterruptHandler's "trigger"-function.
 
                     // set controller reset bit (CRST)
                     let gctl = (address + 0x08) as *mut u32;
