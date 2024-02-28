@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use core::arch::asm;
 use core::ops::BitOr;
 use log::debug;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
@@ -68,7 +67,7 @@ impl IHDA {
                     unsafe {
                         gctl.write(gctl.read() | 0x00000001);
                     }
-                    
+
                     // some temporary reading examples of IHDA registers
 
                     let minor_ptr = (address + 2) as *const u8;
@@ -79,7 +78,7 @@ impl IHDA {
                     }
 
                     let wall_clock_counter = (address + 0x30) as *const u32;
-                    
+
                     unsafe {
                         debug!("Wall Clock Time: {:#x}", wall_clock_counter.read());
                         debug!("Wall Clock Time: {:#x}", wall_clock_counter.read());
