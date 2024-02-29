@@ -7,6 +7,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus};
+use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
 use crate::process::process::current_process;
@@ -63,10 +64,11 @@ impl IHDA {
 
                     // set controller reset bit (CRST)
                     let gctl = (address + 0x08) as *mut u32;
-
                     unsafe {
                         gctl.write(gctl.read() | 0x00000001);
                     }
+                    // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after setting CRST, so that the hardware has time to react
+                    Timer::wait(1);
 
                     // some temporary reading examples of IHDA registers
 
