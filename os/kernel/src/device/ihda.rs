@@ -222,13 +222,10 @@ impl IHDA {
                     // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
                     Timer::wait(1);
 
-                    // temporary example how to use ControllerRegisterSet: dump INTCTL register, set last bit and dump it again
-
-
+                    // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
                     unsafe {
-                        crs.intctl.dump();
-                        crs.intctl.write(crs.intctl.read() | 0x80000000);
-                        crs.intctl.dump();
+                        crs.intctl.write(crs.intctl.read() | 0xC0000000);
+                        assert_eq!(crs.intctl.read() & 0xC0000000, 0xC0000000);
                     }
 
                     /* potential ways to write to a buffer (don't compile yet)
