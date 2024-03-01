@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceRoot}/loader/kernel.elf",
             "cwd": "${workspaceFolder}",
-            "miDebuggerPath": "/usr/bin/gdb",
+            "miDebuggerPath": "/home/mungubuntu/.cargo/bin/rust-gdb",
             "miDebuggerServerAddress": "localhost:1234",
             "stopAtEntry": false,
             "setupCommands": [
