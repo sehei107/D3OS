@@ -207,13 +207,12 @@ impl IHDA {
                     let crs = ControllerRegisterSet::new(address);
 
                     // set controller reset bit (CRST)
-                    let gctl = crs.gctl;
                     unsafe {
-                        gctl.write(gctl.read() | 0x00000001);
+                        crs.gctl.write(crs.gctl.read() | 0x00000001);
                         let mut crst_timer: u8 = 0;
                         // value for CRST_TIMEOUT arbitrarily chosen
                         const CRST_TIMEOUT: u8 = 100;
-                        while (gctl.read() & 0x00000001) != 1 {
+                        while (crs.gctl.read() & 0x00000001) != 1 {
                             crst_timer += 1;
                             if crst_timer > CRST_TIMEOUT {
                                 panic!("IHDA controller reset timed out")
@@ -226,12 +225,10 @@ impl IHDA {
                     // temporary example how to use ControllerRegisterSet: dump INTCTL register, set last bit and dump it again
 
 
-                    let intctl = crs.intctl;
-
                     unsafe {
-                        intctl.dump();
-                        intctl.write(intctl.read() | 0x80000000);
-                        intctl.dump();
+                        crs.intctl.dump();
+                        crs.intctl.write(crs.intctl.read() | 0x80000000);
+                        crs.intctl.dump();
                     }
 
                     /* potential ways to write to a buffer (don't compile yet)
