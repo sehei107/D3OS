@@ -204,17 +204,28 @@ impl IHDA {
                     // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
                     // will now result in a call of IHDAInterruptHandler's "trigger"-function.
 
+                    let crs = ControllerRegisterSet::new(address);
+
                     // set controller reset bit (CRST)
-                    let gctl = (address + 0x08) as *mut u32;
+                    let gctl = crs.gctl;
                     unsafe {
                         gctl.write(gctl.read() | 0x00000001);
+                        let mut crst_timer: u8 = 0;
+                        // value for CRST_TIMEOUT arbitrarily chosen
+                        const CRST_TIMEOUT: u8 = 100;
+                        while (gctl.read() & 0x00000001) != 1 {
+                            crst_timer += 1;
+                            if crst_timer > CRST_TIMEOUT {
+                                panic!("IHDA controller reset timed out")
+                            }
+                        }
                     }
-                    // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after setting CRST, so that the hardware has time to react
+                    // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
                     Timer::wait(1);
 
                     // temporary example how to use ControllerRegisterSet: dump INTCTL register, set last bit and dump it again
 
-                    let crs = ControllerRegisterSet::new(address);
+
                     let intctl = crs.intctl;
 
                     unsafe {
