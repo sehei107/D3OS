@@ -165,6 +165,21 @@ impl ControllerRegisterSet {
             // registers for additional link positions starting from byte 20A0 are optional
         }
     }
+
+    pub unsafe fn immediate_command(&self, command: Command) -> u32 {
+        self.icis.write(0b10);
+        self.icoi.write(command.value());
+        self.icis.write(0b1);
+        let start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        const ICIS_TIMEOUT: usize = 100;
+        while (self.icis.read() & 0b10) != 0b10 {
+            if timer().read().systime_ms() > start_timer + ICIS_TIMEOUT {
+                panic!("IHDA immediate command timed out")
+            }
+        }
+        self.icii.read()
+    }
 }
 
 struct Command {
@@ -247,20 +262,12 @@ impl IHDA {
                     }
 
                     // send command via Immediate Command Registers
-                    let verb = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 }.value();     // subordinate node count
-                    let verb1 = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 }.value();    // vendor id
+                    let subordinate_node_count = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
+                    let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
 
                     unsafe {
-                        crs.icis.write(0b10);
-                        crs.icoi.write(verb);
-                        crs.icis.write(0b1);
-                        assert_eq!(crs.icis.read() & 0b10, 0b10);
-                        crs.icii.dump();
-                        crs.icis.write(0b10);
-                        crs.icoi.write(verb1);
-                        crs.icis.write(0b1);
-                        assert_eq!(crs.icis.read() & 0b10, 0b10);
-                        crs.icii.dump();
+                        debug!("subordinate_node_count: {:#x}", crs.immediate_command(subordinate_node_count));
+                        debug!("vendor_id: {:#x}", crs.immediate_command(vendor_id));
                     }
 
                     /* potential ways to write to a buffer (don't compile yet)
