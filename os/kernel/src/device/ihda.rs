@@ -81,6 +81,9 @@ struct ControllerRegisterSet {
     rirbctl: Register<u8>,
     rirbsts: Register<u8>,
     rirbsize: Register<u8>,
+    icoi: Register<u32>,
+    icii: Register<u32>,
+    icis: Register<u16>,
     dpiblbase: Register<u32>,
     dpibubase: Register<u32>,
     sd0ctl: Register<u32>,
@@ -135,7 +138,10 @@ impl ControllerRegisterSet {
             rirbsts: Register::new((mmio_address + 0x5D) as *mut u8, "RIRBSTS"),
             rirbsize: Register::new((mmio_address + 0x5E) as *mut u8, "RIRBSIZE"),
             // byte with offset 0x5F is reserved
-            // immediate command registers from bytes 0x60 to 0x69 are optional
+            // the following three immediate command registers from bytes 0x60 to 0x69 are optional
+            icoi: Register::new((mmio_address + 0x60) as *mut u32, "ICOI"),
+            icii: Register::new((mmio_address + 0x64) as *mut u32, "ICII"),
+            icis: Register::new((mmio_address + 0x68) as *mut u16, "ICIS"),
             // bytes with offset 0x6A to 0x6F are reserved
             dpiblbase: Register::new((mmio_address + 0x70) as *mut u32, "DPIBLBASE"),
             dpibubase: Register::new((mmio_address + 0x74) as *mut u32, "DPIBUBASE"),
@@ -158,6 +164,19 @@ impl ControllerRegisterSet {
             sd0lpiba: Register::new((mmio_address + 0x2084) as *mut u32, "SD0LPIBA"),
             // registers for additional link positions starting from byte 20A0 are optional
         }
+    }
+}
+
+struct Command {
+    codec_address: u8,
+    node_id: u8,
+    verb: u16,
+    parameter: u8,
+}
+
+impl Command {
+    fn value(&self) -> u32 {
+        (self.codec_address as u32) << 28 | (self.node_id as u32) << 20 | (self.verb as u32) << 8 | self.parameter as u32
     }
 }
 
@@ -184,6 +203,8 @@ impl IHDA {
 
             match bar0 {
                 Bar::Memory32 { address, size, .. } => {
+                    let crs = ControllerRegisterSet::new(address);
+
                     // set BME bit in command register of PCI configuration space
                     device.update_command(pci.config_space(), |command| {
                         command.bitor(CommandRegister::BUS_MASTER_ENABLE)
@@ -203,8 +224,6 @@ impl IHDA {
                     apic().allow(interrupt_vector);
                     // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
                     // will now result in a call of IHDAInterruptHandler's "trigger"-function.
-
-                    let crs = ControllerRegisterSet::new(address);
 
                     // set controller reset bit (CRST)
                     unsafe {
@@ -226,6 +245,23 @@ impl IHDA {
                     unsafe {
                         crs.intctl.write(crs.intctl.read() | 0xC0000000);
                         assert_eq!(crs.intctl.read() & 0xC0000000, 0xC0000000);
+                    }
+
+                    // send command via Immediate Command Registers
+                    let verb = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 }.value();     // subordinate node count
+                    let verb1 = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 }.value();    // vendor id
+
+                    unsafe {
+                        crs.icis.write(0b10);
+                        crs.icoi.write(verb);
+                        crs.icis.write(0b1);
+                        assert_eq!(crs.icis.read() & 0b10, 0b10);
+                        crs.icii.dump();
+                        crs.icis.write(0b10);
+                        crs.icoi.write(verb1);
+                        crs.icis.write(0b1);
+                        assert_eq!(crs.icis.read() & 0b10, 0b10);
+                        crs.icii.dump();
                     }
 
                     /* potential ways to write to a buffer (don't compile yet)
