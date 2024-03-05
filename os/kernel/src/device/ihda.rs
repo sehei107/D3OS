@@ -9,7 +9,7 @@ use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{apic, interrupt_dispatcher, pci_bus};
+use crate::{apic, interrupt_dispatcher, pci_bus, timer};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -228,12 +228,11 @@ impl IHDA {
                     // set controller reset bit (CRST)
                     unsafe {
                         crs.gctl.write(crs.gctl.read() | 0x00000001);
-                        let mut crst_timer: u8 = 0;
+                        let start_timer = timer().read().systime_ms();
                         // value for CRST_TIMEOUT arbitrarily chosen
-                        const CRST_TIMEOUT: u8 = 100;
+                        const CRST_TIMEOUT: usize = 100;
                         while (crs.gctl.read() & 0x00000001) != 1 {
-                            crst_timer += 1;
-                            if crst_timer > CRST_TIMEOUT {
+                            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
                                 panic!("IHDA controller reset timed out")
                             }
                         }
