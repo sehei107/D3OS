@@ -6,10 +6,11 @@ use core::ops::BitOr;
 use log::debug;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
+use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{apic, interrupt_dispatcher, pci_bus, timer};
+use crate::{apic, interrupt_dispatcher, memory, pci_bus, timer};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -225,6 +226,12 @@ impl IHDA {
                         command.bitor(CommandRegister::BUS_MASTER_ENABLE)
                     });
 
+                    // set Memory Space bit in command register of PCI configuration space (so that hardware can respond to memory space access)
+                    device.update_command(pci.config_space(), |command| {
+                        command.bitor(CommandRegister::MEMORY_ENABLE)
+                    });
+
+
                     // setup MMIO space (currently one-to-one mapping from physical address space to virtual address space of kernel)
                     let pages = size as usize / PAGE_SIZE;
                     let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
@@ -242,6 +249,7 @@ impl IHDA {
 
                     // set controller reset bit (CRST)
                     unsafe {
+                        crs.gctl.write(0x0);
                         crs.gctl.write(crs.gctl.read() | 0x00000001);
                         let start_timer = timer().read().systime_ms();
                         // value for CRST_TIMEOUT arbitrarily chosen
@@ -255,15 +263,159 @@ impl IHDA {
                     // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
                     Timer::wait(1);
 
+                    // set Flush Control (FCNTRL) and Accept Unsolicited Response Enable (UNSOL) bits
+                    unsafe {
+                        crs.gctl.write(0x101);
+                        assert_eq!(crs.gctl.read(), 0x101);
+                    }
+
                     // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
                     unsafe {
                         crs.intctl.write(crs.intctl.read() | 0xC0000000);
                         assert_eq!(crs.intctl.read() & 0xC0000000, 0xC0000000);
                     }
 
-                    // send command via Immediate Command Registers
+                    // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
+                    unsafe {
+                        crs.wakeen.write(0x7FFF);
+                    }
+
+                    // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
+                    unsafe {
+                        crs.corbctl.write(0x0);
+                    }
+
+                    // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
+                    let corbsize;
+                    unsafe {
+                        corbsize = crs.corbsize.read() & 0b11;
+                    }
+                    assert_eq!(corbsize, 0b10);
+
+                    // setup MMIO space for Command Outbound Ring Buffer – CORB
+                    let corb_frame_range = memory::physical::alloc(1);
+                    match corb_frame_range {
+                        PhysFrameRange { start, end: _ } => {
+                            let start_address = start.start_address().as_u64();
+                            let lbase = (start_address & 0xFFFFFFFF) as u32;
+                            let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+                            unsafe {
+                                crs.corblbase.write(lbase);
+                                crs.corbubase.write(ubase);
+                            }
+                        }
+                    }
+
+                    // clear CORBWP and reset CORBRP
+                    unsafe {
+                        crs.corbwp.write(0x0);
+
+                        crs.corbrp.write(0x8000);
+                        let start_timer = timer().read().systime_ms();
+                        // value for CORBRPRST_TIMEOUT arbitrarily chosen
+                        const CORBRPRST_TIMEOUT: usize = 100;
+                        while (crs.corbrp.read() & 0x8000) != 0x8000 {
+                            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+                                panic!("CORB read pointer reset timed out")
+                            }
+                        }
+                        crs.corbrp.write(0x0);
+                        while (crs.corbrp.read() & 0x8000) != 0x0 {
+                            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+                                panic!("CORB read pointer clear timed out")
+                            }
+                        }
+                    }
+
+                    // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
+                    unsafe {
+                        crs.rirbctl.write(0x0);
+                    }
+
+                    // setup MMIO space for Response Inbound Ring Buffer – RIRB
+                    let rirb_frame_range = memory::physical::alloc(1);
+                    match rirb_frame_range {
+                        PhysFrameRange { start, end: _ } => {
+                            let start_address = start.start_address().as_u64();
+                            let lbase = (start_address & 0xFFFFFFFF) as u32;
+                            let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+                            unsafe {
+                                crs.rirblbase.write(lbase);
+                                crs.rirbubase.write(ubase);
+                            }
+                        }
+                    }
+
+                    unsafe {
+                        (crs.corblbase.read() as *mut u32).write(0x0);
+                    }
+
+                    // reset RIRBWP
+                    unsafe {
+                        crs.rirbwp.write(0x8000);
+                    }
+
+                    // start CORB and RIRB
+                    unsafe {
+                        // set CORBRUN and CMEIE bits
+                        crs.corbctl.write(0b11);
+                        // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
+                        crs.rirbctl.write(0b111);
+                    }
+
                     let subordinate_node_count = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
                     let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
+
+                    // send verb via CORB
+                    unsafe {
+                        let first_entry = crs.corblbase.read() as *mut u32;
+                        let second_entry = (crs.corblbase.read() + 4) as *mut u32;
+                        let third_entry = (crs.corblbase.read() + 8) as *mut u32;
+                        let fourth_entry = (crs.corblbase.read() + 12) as *mut u32;
+                        debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
+                        debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
+                        debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
+                        debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
+                        debug!("CORB before: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
+                        debug!("RIRB before: {:#x}", (crs.rirblbase.read() as *mut u128).read());
+                        debug!("RIRB before: {:#x}", ((crs.rirblbase.read() + 16) as *mut u128).read());
+                        second_entry.write(vendor_id.value());
+                        third_entry.write(subordinate_node_count.value());
+                        crs.corbwp.write(crs.corbwp.read() + 2);
+                        crs.corbctl.write(crs.corbctl.read() | 0b1);
+                        debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
+                        debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
+                        debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
+                        debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
+                        debug!("CORB after: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
+                        debug!("RIRB after: {:#x}", (crs.rirblbase.read() as *mut u128).read());
+                        debug!("RIRB after: {:#x}", ((crs.rirblbase.read() + 16) as *mut u128).read());
+                    }
+
+                    unsafe {
+                        crs.gctl.dump();
+                        crs.wakeen.dump();
+                        crs.corbctl.dump();
+                        crs.rirbctl.dump();
+                        crs.corbsize.dump();
+                        crs.rirbsize.dump();
+                        crs.corbsts.dump();
+ 
+                        crs.corbwp.dump();
+                        // expect the CORBRP to be equal to CORBWP if sending commands was successful
+                        crs.corbrp.dump();
+                        crs.corblbase.dump();
+                        crs.corbubase.dump();
+                        
+                        crs.rirbwp.dump();
+                        crs.rirblbase.dump();
+                        crs.rirbubase.dump();
+
+                        crs.walclk.dump();
+                        crs.walclka.dump();
+                    }
+
+                    // send command via Immediate Command Registers
 
                     unsafe {
                         debug!("subordinate_node_count: {:#x}", crs.immediate_command(subordinate_node_count));
