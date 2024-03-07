@@ -21,7 +21,11 @@ const PCI_IHDA_DEVICE:  SubClass = 3;
 
 pub struct IHDA {
     mmio_address: u32,
+    crs: ControllerRegisterSet,
 }
+
+unsafe impl Sync for IHDA {}
+unsafe impl Send for IHDA {}
 
 // representation of a IHDA register
 struct Register<T> {
@@ -231,7 +235,6 @@ impl IHDA {
                         command.bitor(CommandRegister::MEMORY_ENABLE)
                     });
 
-
                     // setup MMIO space (currently one-to-one mapping from physical address space to virtual address space of kernel)
                     let pages = size as usize / PAGE_SIZE;
                     let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
@@ -434,6 +437,7 @@ impl IHDA {
 
                     return Self {
                         mmio_address: address,
+                        crs,
                     }
                 },
 
