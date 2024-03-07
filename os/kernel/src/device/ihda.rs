@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use core::fmt::LowerHex;
 use core::ops::BitOr;
 use log::debug;
+use num_traits::int::PrimInt;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::structures::paging::frame::PhysFrameRange;
@@ -34,7 +35,7 @@ struct Register<T> {
 }
 
 // the following LowerHex type bound is only necessary because of the dump function which displays T as a hex value
-impl<T: LowerHex> Register<T> {
+impl<T: LowerHex + PrimInt> Register<T> {
     pub const fn new(ptr: *mut T, name: &'static str) -> Self {
         Self {
             ptr,
@@ -48,6 +49,30 @@ impl<T: LowerHex> Register<T> {
 
     pub unsafe fn write(&self, value: T) {
         self.ptr.write(value);
+    }
+
+    pub unsafe fn set_bit(&self, index: u8) {
+        let bitmask: u32 = 0x1 << index;
+        self.write(self.read() | T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
+    }
+
+    pub unsafe fn clear_bit(&self, index: u8) {
+        let bitmask: u32 = 0x1 << index;
+        self.write(self.read() & !T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
+    }
+
+    pub unsafe fn set_all_bits(&self) {
+        self.write(!T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
+    }
+
+    pub unsafe fn clear_all_bits(&self) {
+        self.write(T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
+    }
+
+    pub unsafe fn assert_bit(&self, index: u8) -> bool {
+        let bitmask: u32 = 0x1 << index;
+        (self.read() & T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"))
+            != T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail")
     }
 
     pub unsafe fn dump(&self) {
@@ -252,12 +277,12 @@ impl IHDA {
 
                     // set controller reset bit (CRST)
                     unsafe {
-                        crs.gctl.write(0x0);
-                        crs.gctl.write(crs.gctl.read() | 0x00000001);
+                        crs.gctl.clear_all_bits();
+                        crs.gctl.set_bit(0);
                         let start_timer = timer().read().systime_ms();
                         // value for CRST_TIMEOUT arbitrarily chosen
                         const CRST_TIMEOUT: usize = 100;
-                        while (crs.gctl.read() & 0x00000001) != 1 {
+                        while !crs.gctl.assert_bit(0) {
                             if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
                                 panic!("IHDA controller reset timed out")
                             }
@@ -268,24 +293,24 @@ impl IHDA {
 
                     // set Flush Control (FCNTRL) and Accept Unsolicited Response Enable (UNSOL) bits
                     unsafe {
-                        crs.gctl.write(0x101);
-                        assert_eq!(crs.gctl.read(), 0x101);
+                        crs.gctl.set_bit(1);
+                        crs.gctl.set_bit(8);
                     }
 
                     // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
                     unsafe {
-                        crs.intctl.write(crs.intctl.read() | 0xC0000000);
-                        assert_eq!(crs.intctl.read() & 0xC0000000, 0xC0000000);
+                        crs.intctl.set_bit(30);
+                        crs.intctl.set_bit(31);
                     }
 
                     // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
                     unsafe {
-                        crs.wakeen.write(0x7FFF);
+                        crs.wakeen.set_all_bits();
                     }
 
                     // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
                     unsafe {
-                        crs.corbctl.write(0x0);
+                        crs.corbctl.clear_all_bits();
                     }
 
                     // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
@@ -311,19 +336,19 @@ impl IHDA {
 
                     // clear CORBWP and reset CORBRP
                     unsafe {
-                        crs.corbwp.write(0x0);
+                        crs.corbwp.clear_all_bits();
 
-                        crs.corbrp.write(0x8000);
+                        crs.corbrp.set_bit(15);
                         let start_timer = timer().read().systime_ms();
                         // value for CORBRPRST_TIMEOUT arbitrarily chosen
                         const CORBRPRST_TIMEOUT: usize = 100;
-                        while (crs.corbrp.read() & 0x8000) != 0x8000 {
+                        while !crs.corbrp.assert_bit(15) {
                             if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
                                 panic!("CORB read pointer reset timed out")
                             }
                         }
-                        crs.corbrp.write(0x0);
-                        while (crs.corbrp.read() & 0x8000) != 0x0 {
+                        crs.corbrp.clear_all_bits();
+                        while crs.corbrp.assert_bit(15) {
                             if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
                                 panic!("CORB read pointer clear timed out")
                             }
@@ -332,7 +357,7 @@ impl IHDA {
 
                     // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
                     unsafe {
-                        crs.rirbctl.write(0x0);
+                        crs.rirbctl.clear_all_bits();
                     }
 
                     // setup MMIO space for Response Inbound Ring Buffer – RIRB
@@ -349,21 +374,25 @@ impl IHDA {
                         }
                     }
 
+                    // clear first CORB-entry (might not be necessary)
                     unsafe {
                         (crs.corblbase.read() as *mut u32).write(0x0);
                     }
 
                     // reset RIRBWP
                     unsafe {
-                        crs.rirbwp.write(0x8000);
+                        crs.rirbwp.set_bit(15);
                     }
 
                     // start CORB and RIRB
                     unsafe {
                         // set CORBRUN and CMEIE bits
-                        crs.corbctl.write(0b11);
+                        crs.corbctl.set_bit(0);
+                        crs.corbctl.set_bit(1);
                         // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
-                        crs.rirbctl.write(0b111);
+                        crs.rirbctl.set_bit(0);
+                        crs.rirbctl.set_bit(1);
+                        crs.rirbctl.set_bit(2);
                     }
 
                     let subordinate_node_count = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
