@@ -179,6 +179,7 @@ pub fn init_pci() {
 
 pub fn init_ihda() {
     IHDA.call_once(|| IHDA::new());
+    IHDA.get().unwrap().init();
 }
 
 pub fn init_initrd(module: &ModuleTag) {
