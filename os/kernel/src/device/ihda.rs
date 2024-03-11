@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt::LowerHex;
 use core::ops::BitOr;
 use log::debug;
@@ -19,6 +20,7 @@ use crate::process::process::current_process;
 
 const PCI_MULTIMEDIA_DEVICE:  BaseClass = 4;
 const PCI_IHDA_DEVICE:  SubClass = 3;
+const MAX_AMOUNT_OF_CODECS: u8 = 15;
 
 pub struct IHDA {
     crs: ControllerRegisterSet,
@@ -224,6 +226,36 @@ impl Command {
     }
 }
 
+struct RootNode {
+    codec_address: u8,
+    node_id: u8,
+    function_groups: Vec<FunctionGroupNode>,
+}
+
+impl RootNode {
+    fn new(codec_address: u8) -> RootNode {
+        RootNode {
+            codec_address,
+            node_id: 0,
+            function_groups: FunctionGroupNode::scan(codec_address),
+        }
+    }
+}
+
+struct FunctionGroupNode {
+    node_id: u8,
+}
+
+impl FunctionGroupNode {
+    fn scan(codec_address: u8) -> Vec<FunctionGroupNode> {
+        return Vec::new();
+    }
+}
+
+struct WidgetNode {
+    node_id: u8,
+}
+
 #[derive(Default)]
 struct IHDAInterruptHandler;
 
@@ -407,7 +439,8 @@ impl IHDA {
             self.crs.rirbctl.set_bit(2);
         }
 
-        let subordinate_node_count = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
+        let subordinate_node_count_root = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
+        let subordinate_node_count_start = Command { codec_address: 0, node_id: 1, verb: 0xF00, parameter: 4 };     // subordinate node count
         let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
 
         // send verb via CORB
@@ -424,7 +457,7 @@ impl IHDA {
             debug!("RIRB before: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
             debug!("RIRB before: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
             second_entry.write(vendor_id.value());
-            third_entry.write(subordinate_node_count.value());
+            third_entry.write(subordinate_node_count_root.value());
             self.crs.corbwp.write(self.crs.corbwp.read() + 2);
             self.crs.corbctl.write(self.crs.corbctl.read() | 0b1);
             debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
@@ -462,7 +495,8 @@ impl IHDA {
         // send command via Immediate Command Registers
 
         unsafe {
-            debug!("subordinate_node_count: {:#x}", self.crs.immediate_command(subordinate_node_count));
+            debug!("subordinate_node_count of root node: {:#x}", self.crs.immediate_command(subordinate_node_count_root));
+            debug!("subordinate_node_count of starting node: {:#x}", self.crs.immediate_command(subordinate_node_count_start));
             debug!("vendor_id: {:#x}", self.crs.immediate_command(vendor_id));
         }
 
@@ -475,5 +509,23 @@ impl IHDA {
         let phys_addr = current_process().address_space().translate(VirtAddr::new(audio_buffer.as_ptr() as u64)).unwrap();
 
         */
+        unsafe{
+            let codecs = self.scan();
+            for codec in codecs {
+
+            }
+        }
+
+    }
+
+    // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
+    unsafe fn scan(&self) -> Vec<RootNode> {
+        let mut codecs: Vec<RootNode> = Vec::new();
+        for index in 0..MAX_AMOUNT_OF_CODECS {
+            if self.crs.wakests.assert_bit(index) {
+                codecs.push(RootNode::new(index));
+            }
+        }
+        codecs
     }
 }
