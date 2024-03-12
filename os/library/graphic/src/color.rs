@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use core::marker::Copy;
 
 /**
@@ -32,68 +30,22 @@ pub struct Color {
 
 const BRIGHTNESS_SHIFT: u8 = 85;
 
-pub const INVISIBLE: Color = Color {
-    red: 0,
-    green: 0,
-    blue: 0,
-    alpha: 0,
-};
+pub const INVISIBLE: Color = Color { red: 0, green: 0, blue: 0, alpha: 0 };
 
 // ANSI colors
-pub const BLACK: Color = Color {
-    red: 0,
-    green: 0,
-    blue: 0,
-    alpha: 255,
-};
-pub const RED: Color = Color {
-    red: 170,
-    green: 0,
-    blue: 0,
-    alpha: 255,
-};
-pub const GREEN: Color = Color {
-    red: 0,
-    green: 170,
-    blue: 0,
-    alpha: 255,
-};
-pub const YELLOW: Color = Color {
-    red: 170,
-    green: 170,
-    blue: 0,
-    alpha: 255,
-};
-pub const BROWN: Color = Color {
-    red: 170,
-    green: 85,
-    blue: 0,
-    alpha: 255,
-};
-pub const BLUE: Color = Color {
-    red: 0,
-    green: 0,
-    blue: 170,
-    alpha: 255,
-};
-pub const MAGENTA: Color = Color {
-    red: 170,
-    green: 0,
-    blue: 170,
-    alpha: 255,
-};
-pub const CYAN: Color = Color {
-    red: 0,
-    green: 170,
-    blue: 170,
-    alpha: 255,
-};
-pub const WHITE: Color = Color {
-    red: 170,
-    green: 170,
-    blue: 170,
-    alpha: 255,
-};
+pub const BLACK: Color = Color { red: 0, green: 0, blue: 0, alpha: 255 };
+pub const RED: Color = Color { red: 170, green: 0, blue: 0, alpha: 255 };
+pub const GREEN: Color = Color { red: 0, green: 170, blue: 0, alpha: 255 };
+pub const YELLOW: Color = Color { red: 170, green: 170, blue: 0, alpha: 255 };
+pub const BROWN: Color = Color { red: 170, green: 85, blue: 0, alpha: 255 };
+pub const BLUE: Color = Color { red: 0, green: 0, blue: 170, alpha: 255 };
+pub const MAGENTA: Color = Color { red: 170, green: 0, blue: 170, alpha: 255 };
+pub const CYAN: Color = Color { red: 0, green: 170, blue: 170, alpha: 255 };
+pub const WHITE: Color = Color { red: 170, green: 170, blue: 170, alpha: 255, };
+
+// Arbitrary colors
+pub const HHU_BLUE: Color = Color { red: 0, green: 106, blue: 179, alpha: 255 };
+pub const HHU_GREEN: Color = Color { red: 140, green: 177, blue: 16, alpha: 255 };
 
 impl Color {
     pub const fn from_rgb(rgb: u32, bpp: u8) -> Color {
@@ -112,12 +64,7 @@ impl Color {
         let green: u8 = ((rgba & 0x0000ff00) >> 8) as u8;
         let blue: u8 = (rgba & 0x000000ff) as u8;
 
-        Self {
-            red,
-            green,
-            blue,
-            alpha,
-        }
+        Self { red, green, blue, alpha }
     }
 
     pub const fn from_rgb_24(rgb: u32) -> Color {
@@ -125,12 +72,7 @@ impl Color {
         let green: u8 = ((rgb & 0x0000ff00) >> 8) as u8;
         let blue: u8 = (rgb & 0x000000ff) as u8;
 
-        Self {
-            red,
-            green,
-            blue,
-            alpha: 0,
-        }
+        Self { red, green, blue, alpha: 0 }
     }
 
     pub const fn from_rgb_16(rgb: u16) -> Color {
@@ -138,12 +80,7 @@ impl Color {
         let green: u8 = (((rgb & 0x07e0) >> 5) * (256 / 64)) as u8;
         let blue: u8 = ((rgb & 0x001f) * (256 / 32)) as u8;
 
-        Self {
-            red,
-            green,
-            blue,
-            alpha: 0,
-        }
+        Self { red, green, blue, alpha: 0 }
     }
 
     pub const fn from_rgb_15(rgb: u16) -> Color {
@@ -151,19 +88,11 @@ impl Color {
         let green: u8 = (((rgb & 0x03e0) >> 5) * (256 / 32)) as u8;
         let blue: u8 = ((rgb & 0x001f) * (256 / 32)) as u8;
 
-        Self {
-            red,
-            green,
-            blue,
-            alpha: 0,
-        }
+        Self { red, green, blue, alpha: 0 }
     }
 
     pub const fn rgb_32(&self) -> u32 {
-        ((self.alpha as u32) << 24)
-            | ((self.red as u32) << 16)
-            | ((self.green as u32) << 8)
-            | ((self.blue) as u32)
+        ((self.alpha as u32) << 24) | ((self.red as u32) << 16) | ((self.green as u32) << 8) | ((self.blue) as u32)
     }
 
     pub const fn rgb_24(&self) -> u32 {
@@ -171,15 +100,11 @@ impl Color {
     }
 
     pub const fn rgb_16(&self) -> u16 {
-        ((self.blue as u16) >> 3)
-            | (((self.green as u16) >> 2) << 5)
-            | (((self.red as u16) >> 3) << 11)
+        ((self.blue as u16) >> 3) | (((self.green as u16) >> 2) << 5) | (((self.red as u16) >> 3) << 11)
     }
 
     pub const fn rgb_15(&self) -> u16 {
-        ((self.blue as u16) >> 3)
-            | (((self.green as u16) >> 3) << 5)
-            | (((self.red as u16) >> 3) << 10)
+        ((self.blue as u16) >> 3) | (((self.green as u16) >> 3) << 5) | (((self.red as u16) >> 3) << 10)
     }
 
     pub const fn bright(&self) -> Color {
@@ -199,12 +124,7 @@ impl Color {
             b = 0xff;
         }
 
-        Self {
-            red: r as u8,
-            green: g as u8,
-            blue: b as u8,
-            alpha: self.alpha,
-        }
+        Self { red: r as u8, green: g as u8, blue: b as u8, alpha: self.alpha, }
     }
 
     pub const fn dim(&self) -> Color {
@@ -224,40 +144,20 @@ impl Color {
             b = 0;
         }
 
-        Self {
-            red: r as u8,
-            green: g as u8,
-            blue: b as u8,
-            alpha: self.alpha,
-        }
+        Self { red: r as u8, green: g as u8, blue: b as u8, alpha: self.alpha, }
     }
 
     pub const fn with_alpha(&self, alpha: u8) -> Self {
-        Self {
-            red: self.red,
-            green: self.green,
-            blue: self.blue,
-            alpha,
-        }
+        Self { red: self.red, green: self.green, blue: self.blue, alpha, }
     }
 
-    pub fn blend(&self, color: &Color) -> Color {
+    pub fn blend(&self, color: Color) -> Color {
         if color.alpha == 0 {
-            return Self {
-                red: self.red,
-                green: self.green,
-                blue: self.blue,
-                alpha: self.alpha,
-            };
+            return Self { red: self.red, green: self.green, blue: self.blue, alpha: self.alpha, };
         }
 
         if color.alpha == 0xff {
-            return Self {
-                red: color.red,
-                green: color.green,
-                blue: color.blue,
-                alpha: color.alpha,
-            };
+            return Self { red: color.red, green: color.green, blue: color.blue, alpha: color.alpha, };
         }
 
         if self.alpha == 0 {
@@ -268,22 +168,11 @@ impl Color {
         let alpha2: f64 = (self.alpha as f64) / 255.0;
         let alpha3: f64 = alpha1 + (1.0 - alpha1) * alpha2;
 
-        let r: u8 = ((1.0 / alpha3)
-            * (alpha1 * color.red as f64 + (1.0 - alpha1) * alpha2 * self.red as f64))
-            as u8;
-        let g: u8 = ((1.0 / alpha3)
-            * (alpha1 * color.green as f64 + (1.0 - alpha1) * alpha2 * self.green as f64))
-            as u8;
-        let b: u8 = ((1.0 / alpha3)
-            * (alpha1 * color.blue as f64 + (1.0 - alpha1) * alpha2 * self.blue as f64))
-            as u8;
+        let r: u8 = ((1.0 / alpha3) * (alpha1 * color.red as f64 + (1.0 - alpha1) * alpha2 * self.red as f64)) as u8;
+        let g: u8 = ((1.0 / alpha3) * (alpha1 * color.green as f64 + (1.0 - alpha1) * alpha2 * self.green as f64)) as u8;
+        let b: u8 = ((1.0 / alpha3) * (alpha1 * color.blue as f64 + (1.0 - alpha1) * alpha2 * self.blue as f64)) as u8;
         let a: u8 = (alpha3 * 255.0) as u8;
 
-        Self {
-            red: r,
-            green: g,
-            blue: b,
-            alpha: a,
-        }
+        Self { red: r, green: g, blue: b, alpha: a }
     }
 }

@@ -14,10 +14,10 @@ use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::memory::{MemorySpace, PAGE_SIZE};
-use crate::{memory, scheduler, tss};
+use crate::{memory, process_manager, scheduler, tss};
 use crate::memory::alloc::StackAllocator;
 use crate::memory::r#virtual::{VirtualMemoryArea, VmaType};
-use crate::process::process::{create_process, kernel_process, Process};
+use crate::process::process::Process;
 
 pub const USER_STACK_END: usize = 0x400000000000;
 const KERNEL_STACK_PAGES: usize = 64;
@@ -49,7 +49,7 @@ impl Thread {
         let thread = Thread {
             id: scheduler::next_thread_id(),
             stacks: Mutex::new(Stacks::new(kernel_stack, user_stack)),
-            process: kernel_process().expect("Trying to create a kernel thread before process initialization!"),
+            process: process_manager().read().kernel_process().expect("Trying to create a kernel thread before process initialization!"),
             entry,
         };
 
@@ -59,16 +59,16 @@ impl Thread {
 
     #[allow(dead_code)]
     pub fn new_user_thread(elf_buffer: &[u8]) -> Rc<Thread> {
-        let process = create_process();
+        let process = process_manager().write().create_process();
         let address_space = process.address_space();
 
-        let elf = Elf::parse(elf_buffer).expect("Failed to parse application!");
+        let elf = Elf::parse(elf_buffer).expect("Failed to parse application");
         elf.program_headers.iter()
             .filter(|header| header.p_type == elf64::program_header::PT_LOAD)
             .for_each(|header| {
                 let page_count = if header.p_memsz as usize % PAGE_SIZE == 0 { header.p_memsz as usize / PAGE_SIZE } else { (header.p_memsz as usize / PAGE_SIZE) + 1 };
                 let frames = memory::physical::alloc(page_count);
-                let virt_start = Page::from_start_address(VirtAddr::new(header.p_vaddr)).expect("ELF: Program section not page aligned!");
+                let virt_start = Page::from_start_address(VirtAddr::new(header.p_vaddr)).expect("ELF: Program section not page aligned");
                 let pages = PageRange { start: virt_start, end: virt_start + page_count as u64 };
 
                 unsafe {

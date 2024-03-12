@@ -3,8 +3,7 @@ use crate::interrupt::interrupt_dispatcher;
 use crate::syscall::syscall_dispatcher;
 use crate::process::thread::Thread;
 use alloc::format;
-use alloc::rc::Rc;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use core::ffi::c_void;
 use core::mem::size_of;
 use core::ops::Deref;
@@ -26,9 +25,8 @@ use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame};
 use x86_64::PrivilegeLevel::Ring0;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
-use crate::{allocator, apic, built_info, efi_system_table, gdt, init_acpi_tables, init_apic, init_efi_system_table, init_ihda, init_initrd, init_keyboard, init_pci, init_serial_port, init_terminal, initrd, logger, memory, ps2_devices, scheduler, serial_port, terminal, timer, tss};
+use crate::{allocator, apic, built_info, efi_system_table, gdt, init_acpi_tables, init_apic, init_efi_system_table, init_ihda, init_initrd, init_keyboard, init_pci, init_serial_port, init_terminal, initrd, logger, memory, process_manager, ps2_devices, scheduler, serial_port, terminal, timer, tss};
 use crate::memory::MemorySpace;
-use crate::process::process::create_process;
 
 extern "C" {
     static ___KERNEL_DATA_START__: u64;
@@ -52,7 +50,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         panic!("Invalid Multiboot2 magic number!");
     }
 
-    let multiboot = unsafe { BootInformation::load(multiboot2_addr).expect("Failed to get Multiboot2 information!") };
+    let multiboot = unsafe { BootInformation::load(multiboot2_addr).expect("Failed to get Multiboot2 information") };
 
     // Search memory map, provided by bootloader of EFI, for usable memory and initialize physical memory management
     if let Some(_) = multiboot.efi_bs_not_exited_tag() {
@@ -106,7 +104,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // Initialize virtual memory management
     info!("Initializing paging");
-    let kernel_process = create_process();
+    let kernel_process = process_manager().write().create_process();
     kernel_process.address_space().load();
 
     // Initialize serial port and enable serial logging
@@ -120,9 +118,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         .expect("No framebuffer information provided by bootloader!")
         .expect("Unknown framebuffer type!");
 
-    let fb_start_page = Page::from_start_address(VirtAddr::new(fb_info.address())).expect("Framebuffer address is not page aligned!");
+    let fb_start_page = Page::from_start_address(VirtAddr::new(fb_info.address())).expect("Framebuffer address is not page aligned");
     let fb_end_page = Page::from_start_address(VirtAddr::new(fb_info.address() + (fb_info.height() * fb_info.pitch()) as u64).align_up(PAGE_SIZE as u64)).unwrap();
-    kernel_process.address_space().map(PageRange { start: fb_start_page, end: fb_end_page }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE);
+    kernel_process.address_space().map(PageRange { start: fb_start_page, end: fb_end_page }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
 
     init_terminal(fb_info.address() as *mut u8, fb_info.pitch(), fb_info.width(), fb_info.height(), fb_info.bpp());
     logger().lock().register(terminal());
@@ -189,7 +187,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         }
     }
 
-    if let Some(system_table) = efi_system_table() {
+    if let Some(efi_system_table) = efi_system_table() {
+        let system_table = efi_system_table.read();
         info!("EFI runtime services available (Vendor: [{}], UEFI version: [{}])", system_table.firmware_vendor(), system_table.uefi_revision());
     }
 
@@ -215,42 +214,19 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         .expect("Initrd not found!");
     init_initrd(initrd_tag);
 
-    // Ready terminal read thread
+    // Ready process cleanup thread
     scheduler().ready(Thread::new_kernel_thread(Box::new(|| {
-        let mut command = String::new();
-        let terminal = terminal();
-        terminal.write_str("> ");
-
         loop {
-            match terminal.read_byte() {
-                -1 => panic!("Terminal input stream closed!"),
-                0x0a => {
-                    match initrd().entries().find(|entry| entry.filename().as_str() == command) {
-                        Some(app) => {
-                            let thread = Thread::new_user_thread(app.data());
-                            scheduler().ready(Rc::clone(&thread));
-                            thread.join();
-                        }
-                        None => {
-                            if !command.is_empty() {
-                                println!("Command not found!");
-                            }
-                        }
-                    }
-
-                    command.clear();
-                    terminal.write_str("> ")
-                },
-                c => command.push(char::from_u32(c as u32).unwrap())
-            }
+            scheduler().sleep(100);
+            process_manager().write().drop_exited_process();
         }
     })));
 
     // Ready shell thread
-    /*scheduler().ready(Thread::new_user_thread(initrd().entries()
+    scheduler().ready(Thread::new_user_thread(initrd().entries()
         .find(|entry| entry.filename().as_str() == "shell")
         .expect("Shell application not available!")
-        .data()));*/
+        .data()));
 
     // Disable terminal logging
     logger().lock().remove(terminal());
@@ -304,7 +280,7 @@ fn kernel_image_region() -> PhysFrameRange {
     let end: PhysFrame;
 
     unsafe {
-        start = PhysFrame::from_start_address(PhysAddr::new(ptr::from_ref(&___KERNEL_DATA_START__) as u64)).expect("Kernel code is not page aligned!");
+        start = PhysFrame::from_start_address(PhysAddr::new(ptr::from_ref(&___KERNEL_DATA_START__) as u64)).expect("Kernel code is not page aligned");
         end = PhysFrame::from_start_address(PhysAddr::new(ptr::from_ref(&___KERNEL_DATA_END__) as u64).align_up(PAGE_SIZE as u64)).unwrap();
     }
 

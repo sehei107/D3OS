@@ -1,7 +1,5 @@
-use alloc::sync::Arc;
 use core::cmp::min;
 use core::ptr;
-use log::debug;
 use spin::RwLock;
 use x86_64::structures::paging::{Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame};
 use x86_64::{PhysAddr, VirtAddr};
@@ -9,8 +7,7 @@ use x86_64::registers::control::{Cr3, Cr3Flags};
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use crate::memory::{MemorySpace, PAGE_SIZE, physical};
-use crate::memory::physical::phys_limit;
-use crate::process::process::{current_process, kernel_process};
+use crate::process_manager;
 
 pub struct AddressSpace {
     root_table: RwLock<*mut PageTable>,
@@ -23,31 +20,13 @@ pub struct VirtualMemoryArea {
     typ: VmaType
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum VmaType {
     Code, Heap, Stack
 }
 
 unsafe impl Send for AddressSpace {}
 unsafe impl Sync for AddressSpace {}
-
-pub fn create_address_space() -> Arc<AddressSpace> {
-    debug!("Page frame allocator before address space creation:\n{}", physical::dump());
-    match kernel_process() {
-        Some(kernel_process) => { // Create user address space
-            let kernel_space = AddressSpace::from_other(&kernel_process.address_space());
-            Arc::new(kernel_space)
-        }
-        None => { // Create kernel address space
-            let address_space = AddressSpace::new(4);
-            let max_phys_addr = phys_limit().start_address();
-            let range = PageRange { start: Page::containing_address(VirtAddr::zero()), end: Page::containing_address(VirtAddr::new(max_phys_addr.as_u64())) };
-
-            address_space.map(range, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE);
-            Arc::new(address_space)
-        }
-    }
-}
 
 fn page_table_index(virt_addr: VirtAddr, level: usize) -> PageTableIndex {
     return PageTableIndex::new_truncate((virt_addr.as_u64() >> 12 >> ((level as u8 - 1) * 9)) as u16);
@@ -60,7 +39,6 @@ impl Drop for AddressSpace {
         let root_table = unsafe { root_table_guard.as_mut().unwrap() };
 
         AddressSpace::drop_table(root_table, depth);
-        debug!("Page frame allocator after address space drop:\n{}", physical::dump());
     }
 }
 
@@ -70,7 +48,7 @@ impl VirtualMemoryArea {
     }
 
     pub fn from_address(start: VirtAddr, size: usize, typ: VmaType) -> Self {
-        let start_page = Page::from_start_address(start).expect("VirtualMemoryArea: Address is not page aligned!");
+        let start_page = Page::from_start_address(start).expect("VirtualMemoryArea: Address is not page aligned");
         let range = PageRange { start: start_page, end: start_page + (size / PAGE_SIZE) as u64 };
 
         Self { range, typ }
@@ -102,7 +80,7 @@ impl VirtualMemoryArea {
 
     pub fn grow_downwards(&self, pages: usize) {
         let new_pages = PageRange { start: self.range.start - pages as u64, end: self.range.start };
-        let process = current_process();
+        let process = process_manager().read().current_process();
 
         process.address_space().map(new_pages, MemorySpace::User, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE);
         process.update_vma(*self, |vma| vma.range.start = new_pages.start);
@@ -171,12 +149,12 @@ impl AddressSpace {
         AddressSpace::translate_in_table(root_table, addr, depth)
     }
 
-    pub fn unmap(&self, pages: PageRange) {
+    pub fn unmap(&self, pages: PageRange, free_physical: bool) {
         let depth = self.depth;
         let root_table_guard = self.root_table.read();
         let root_table = unsafe { root_table_guard.as_mut().unwrap() };
 
-        AddressSpace::unmap_in_table(root_table, pages, depth);
+        AddressSpace::unmap_in_table(root_table, pages, depth, free_physical);
     }
 
     fn copy_table(source: &PageTable, target: &mut PageTable, level: usize) {
@@ -248,7 +226,7 @@ impl AddressSpace {
         return total_allocated_pages;
     }
 
-    fn unmap_in_table(table: &mut PageTable, mut pages: PageRange, level: usize) -> usize {
+    fn unmap_in_table(table: &mut PageTable, mut pages: PageRange, level: usize, free_physical: bool) -> usize {
         let mut total_freed_pages: usize = 0;
         let start_index = usize::from(page_table_index(pages.start.start_address(), level));
 
@@ -259,7 +237,7 @@ impl AddressSpace {
                 }
 
                 let next_level_table = unsafe { (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap() };
-                let freed_pages = AddressSpace::unmap_in_table(next_level_table, pages, level - 1);
+                let freed_pages = AddressSpace::unmap_in_table(next_level_table, pages, level - 1, free_physical);
                 pages = PageRange { start: pages.start + freed_pages as u64, end: pages.end };
                 total_freed_pages += freed_pages;
 
@@ -283,8 +261,11 @@ impl AddressSpace {
                 }
 
                 if !entry.is_unused() {
-                    let frame = PhysFrame::from_start_address(entry.addr()).unwrap();
-                    unsafe { physical::free(PhysFrameRange { start: frame, end: frame + 1 }); }
+                    if free_physical {
+                        let frame = PhysFrame::from_start_address(entry.addr()).unwrap();
+                        unsafe { physical::free(PhysFrameRange { start: frame, end: frame + 1 }); }
+                    }
+
                     entry.set_unused();
                 }
             }
@@ -305,10 +286,13 @@ impl AddressSpace {
                 let next_level_table = unsafe { (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap() };
                 AddressSpace::drop_table(next_level_table, level - 1);
             }
-
-            let table_frame = PhysFrame::from_start_address(PhysAddr::new(ptr::from_ref(table) as u64)).unwrap();
-            unsafe { physical::free(PhysFrameRange { start: table_frame, end: table_frame + 1 }); }
         }
+
+        // Clear table
+        table.iter_mut().for_each(|entry| entry.set_unused());
+
+        let table_frame = PhysFrame::from_start_address(PhysAddr::new(ptr::from_ref(table) as u64)).unwrap();
+        unsafe { physical::free(PhysFrameRange { start: table_frame, end: table_frame + 1 }); }
     }
 
     fn translate_in_table(table: &mut PageTable, addr: VirtAddr, level: usize) -> Option<PhysAddr> {

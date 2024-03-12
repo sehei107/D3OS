@@ -4,5 +4,10 @@ resolver = "2"
 members = [
     "os/kernel",
     "os/application/hello",
-    "os/application/shell"
+    "os/application/shell",
+    "os/application/uptime",
+    "os/application/date"
 ]
+
+# [profile.release]
+# debug = true

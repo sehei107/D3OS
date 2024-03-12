@@ -12,11 +12,10 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{apic, interrupt_dispatcher, memory, pci_bus, timer};
+use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
-use crate::process::process::current_process;
 
 const PCI_MULTIMEDIA_DEVICE:  BaseClass = 4;
 const PCI_IHDA_DEVICE:  SubClass = 3;
@@ -294,8 +293,8 @@ impl IHDA {
                     // setup MMIO space (currently one-to-one mapping from physical address space to virtual address space of kernel)
                     let pages = size as usize / PAGE_SIZE;
                     let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
-                    let address_space = current_process().address_space();
-                    address_space.map(PageRange { start: mmio_page, end: mmio_page + pages as u64 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
+                    let address_space = process_manager().read().kernel_process().unwrap().address_space();
+                    address_space.map(PageRange { start: mmio_page, end: mmio_page + 1 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
 
                     // setup interrupt line
                     const CPU_EXCEPTION_OFFSET: u8 = 32;
@@ -489,7 +488,6 @@ impl IHDA {
             self.crs.rirbubase.dump();
 
             self.crs.walclk.dump();
-            self.crs.walclka.dump();
         }
 
         // send command via Immediate Command Registers

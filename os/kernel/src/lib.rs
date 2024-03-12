@@ -42,6 +42,7 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::{PhysAddr, VirtAddr};
 use crate::device::pci::PciBus;
 use crate::memory::PAGE_SIZE;
+use crate::process::process::ProcessManager;
 
 extern crate alloc;
 
@@ -80,7 +81,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 struct EfiSystemTable {
-    table: SystemTable<Runtime>,
+    table: RwLock<SystemTable<Runtime>>,
 }
 
 unsafe impl Send for EfiSystemTable {}
@@ -88,7 +89,7 @@ unsafe impl Sync for EfiSystemTable {}
 
 impl EfiSystemTable {
     const fn new(table: SystemTable<Runtime>) -> Self {
-        Self { table }
+        Self { table: RwLock::new(table) }
     }
 }
 
@@ -102,6 +103,7 @@ static INIT_RAMDISK: Once<TarArchiveRef> = Once::new();
 #[global_allocator]
 static ALLOCATOR: KernelAllocator = KernelAllocator::new();
 static LOGGER: Mutex<Logger> = Mutex::new(Logger::new());
+static PROCESS_MANAGER: RwLock<ProcessManager> = RwLock::new(ProcessManager::new());
 static SCHEDULER: Once<Scheduler> = Once::new();
 static INTERRUPT_DISPATCHER: Once<InterruptDispatcher> = Once::new();
 
@@ -155,7 +157,9 @@ pub fn init_serial_port() {
 }
 
 pub fn init_terminal(buffer: *mut u8, pitch: u32, width: u32, height: u32, bpp: u8) {
-    TERMINAL.call_once(|| LFBTerminal::new(buffer, pitch, width, height, bpp));
+    let terminal = LFBTerminal::new(buffer, pitch, width, height, bpp);
+    terminal.clear();
+    TERMINAL.call_once(|| terminal);
 
     scheduler().ready(Thread::new_kernel_thread(Box::new(|| {
         let mut cursor_thread = CursorThread::new(&TERMINAL.get().unwrap());
@@ -166,8 +170,8 @@ pub fn init_terminal(buffer: *mut u8, pitch: u32, width: u32, height: u32, bpp: 
 pub fn init_keyboard() {
     PS2.call_once(|| {
         let mut ps2 = PS2::new();
-        ps2.init_controller().unwrap_or_else(|err| panic!("Failed to initialize PS2 controller (Error: {:?})", err));
-        ps2.init_keyboard().unwrap_or_else(|err| panic!("Failed to initialize PS2 keyboard (Error: {:?})", err));
+        ps2.init_controller();
+        ps2.init_keyboard();
 
         return ps2;
     });
@@ -185,7 +189,7 @@ pub fn init_ihda() {
 pub fn init_initrd(module: &ModuleTag) {
     INIT_RAMDISK.call_once(|| {
         let initrd_frames = PhysFrameRange {
-            start: PhysFrame::from_start_address(PhysAddr::new(module.start_address() as u64)).expect("Initial ramdisk is not page aligned!"),
+            start: PhysFrame::from_start_address(PhysAddr::new(module.start_address() as u64)).expect("Initial ramdisk is not page aligned"),
             end: PhysFrame::from_start_address(PhysAddr::new(module.end_address() as u64).align_up(PAGE_SIZE as u64)).unwrap(),
         };
         unsafe { memory::physical::reserve(initrd_frames); }
@@ -215,7 +219,7 @@ pub fn acpi_tables() -> &'static Mutex<AcpiTables<AcpiHandler>> {
     ACPI_TABLES.get().expect("Trying to access ACPI tables before initialization!")
 }
 
-pub fn efi_system_table() -> Option<&'static SystemTable<Runtime>> {
+pub fn efi_system_table() -> Option<&'static RwLock<SystemTable<Runtime>>> {
     match EFI_SYSTEM_TABLE.get() {
         Some(wrapper) => Some(&wrapper.table),
         None => None,
@@ -237,6 +241,10 @@ pub fn logger() -> &'static Mutex<Logger> {
 pub fn interrupt_dispatcher() -> &'static InterruptDispatcher {
     INTERRUPT_DISPATCHER.call_once(|| InterruptDispatcher::new());
     INTERRUPT_DISPATCHER.get().unwrap()
+}
+
+pub fn process_manager() -> &'static RwLock<ProcessManager> {
+    &PROCESS_MANAGER
 }
 
 pub fn scheduler() -> &'static Scheduler {
@@ -265,7 +273,7 @@ pub fn terminal() -> &'static dyn Terminal {
 }
 
 pub fn ps2_devices() -> &'static PS2 {
-    PS2.get().expect("Trying to access keyboard before initialization!")
+    PS2.get().expect("Trying to access PS/2 devices before initialization!")
 }
 
 pub fn pci_bus() -> &'static PciBus {
