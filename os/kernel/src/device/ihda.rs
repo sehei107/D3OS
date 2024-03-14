@@ -236,7 +236,6 @@ trait Node {
 struct RootNode {
     pub codec_address: u8,
     pub node_id: u8,
-    pub function_groups: Vec<FunctionGroupNode>,
 }
 
 impl RootNode {
@@ -244,7 +243,6 @@ impl RootNode {
         RootNode {
             codec_address,
             node_id: 0,
-            function_groups: FunctionGroupNode::scan(codec_address),
         }
     }
 }
@@ -257,12 +255,6 @@ impl Node for RootNode {
 
 struct FunctionGroupNode {
     pub node_id: u8,
-}
-
-impl FunctionGroupNode {
-    fn scan(codec_address: u8) -> Vec<FunctionGroupNode> {
-        return Vec::new();
-    }
 }
 
 impl Node for FunctionGroupNode {
@@ -355,7 +347,7 @@ impl IHDA {
                     let pages = size as usize / PAGE_SIZE;
                     let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
                     let address_space = process_manager().read().kernel_process().unwrap().address_space();
-                    address_space.map(PageRange { start: mmio_page, end: mmio_page + 1 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
+                    address_space.map(PageRange { start: mmio_page, end: mmio_page + pages as u64 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
 
                     // setup interrupt line
                     const CPU_EXCEPTION_OFFSET: u8 = 32;
@@ -386,26 +378,25 @@ impl IHDA {
         self.setup_ihda_config_space();
         info!("IHDA configuration space set up");
 
-        unsafe {
-            self.setup_corb();
-            self.setup_rirb();
-            self.start_corb();
-            self.start_rirb();
-        }
+
+        self.setup_corb();
+        self.setup_rirb();
+        self.start_corb();
+        self.start_rirb();
+
         info!("CORB and RIRB set up and running");
 
 
 
         let subordinate_node_count_root = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
-        let subordinate_node_count_start = Command { codec_address: 0, node_id: 1, verb: 0xF00, parameter: 4 };     // subordinate node count
         let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
 
         // send verb via CORB
         unsafe {
-            let first_entry = self.crs.corblbase.read() as *mut u32;
+            // let first_entry = self.crs.corblbase.read() as *mut u32;
             let second_entry = (self.crs.corblbase.read() + 4) as *mut u32;
             let third_entry = (self.crs.corblbase.read() + 8) as *mut u32;
-            let fourth_entry = (self.crs.corblbase.read() + 12) as *mut u32;
+            // let fourth_entry = (self.crs.corblbase.read() + 12) as *mut u32;
             // debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
             // debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
             // debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
@@ -451,19 +442,18 @@ impl IHDA {
             debug!("RIRB after (next entries): {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
         }
 
-        unsafe{
-            let codecs = self.scan_for_available_codecs();
-            for codec in codecs {
-                let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, 0);
-                debug!("ROOT NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
+        // interview sound card
+        let codecs = self.scan_for_available_codecs();
+        for codec in codecs {
+            let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, 0);
+            debug!("ROOT NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
+            for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+                let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, node_id);
+                debug!("FG NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
                 for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-                    let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, node_id);
-                    debug!("FG NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
-                    for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-                        let widget = self.audio_widget_capabilities(codec.codec_address, node_id);
-                        debug!("WIDGET: max number supported channels: {}", widget.max_number_of_channels());
+                    let widget = self.audio_widget_capabilities(codec.codec_address, node_id);
+                    debug!("WIDGET: max number supported channels: {}", widget.max_number_of_channels());
 
-                    }
                 }
             }
         }
