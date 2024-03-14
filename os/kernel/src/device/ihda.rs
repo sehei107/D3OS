@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
-use core::ops::BitOr;
+use core::ops::{BitAnd, BitOr};
 use log::{debug, info};
 use num_traits::int::PrimInt;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
@@ -225,10 +225,18 @@ impl Command {
     }
 }
 
+struct Codec {
+    pub codec_address: u8,
+}
+
+trait Node {
+    fn get_node_id(&self) -> u8;
+}
+
 struct RootNode {
-    codec_address: u8,
-    node_id: u8,
-    function_groups: Vec<FunctionGroupNode>,
+    pub codec_address: u8,
+    pub node_id: u8,
+    pub function_groups: Vec<FunctionGroupNode>,
 }
 
 impl RootNode {
@@ -241,8 +249,14 @@ impl RootNode {
     }
 }
 
+impl Node for RootNode {
+    fn get_node_id(&self) -> u8 {
+        self.node_id
+    }
+}
+
 struct FunctionGroupNode {
-    node_id: u8,
+    pub node_id: u8,
 }
 
 impl FunctionGroupNode {
@@ -251,8 +265,55 @@ impl FunctionGroupNode {
     }
 }
 
+impl Node for FunctionGroupNode {
+    fn get_node_id(&self) -> u8 {
+        self.node_id
+    }
+}
+
+enum WidgetType {
+    AudioOutput,
+    AudioInput,
+    AudioMixer,
+    AudioSelector,
+    PinComplex,
+    PowerWidget,
+    VolumeKnobWidget,
+    BeepGeneratorWidget,
+    VendorDefinedAudioWidget,
+}
+
 struct WidgetNode {
     node_id: u8,
+    widget_type: WidgetType,
+    delay: u8,
+    chan_count_ext: u8,
+    cp_caps: bool,
+    lr_swap: bool,
+    power_cntrl: bool,
+    digital: bool,
+    conn_list: bool,
+    unsol_capable: bool,
+    proc_widget: bool,
+    stripe: bool,
+    format_override: bool,
+    amp_param_override: bool,
+    out_amp_present: bool,
+    in_amp_present: bool,
+    chan_count_lsb: bool,
+}
+
+impl WidgetNode {
+    pub fn max_number_of_channels(&self) -> u8 {
+        // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
+        (self.chan_count_ext << 1) + (self.chan_count_lsb as u8) + 1
+    }
+}
+
+impl Node for WidgetNode {
+    fn get_node_id(&self) -> u8 {
+        self.node_id
+    }
 }
 
 #[derive(Default)]
@@ -331,7 +392,7 @@ impl IHDA {
             self.start_corb();
             self.start_rirb();
         }
-        info!("CORB and RIRB setup and running");
+        info!("CORB and RIRB set up and running");
 
 
 
@@ -390,31 +451,24 @@ impl IHDA {
             debug!("RIRB after (next entries): {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
         }
 
-        // send command via Immediate Command Registers
-
-        unsafe {
-            debug!("subordinate_node_count of root node: {:#x}", self.crs.immediate_command(subordinate_node_count_root));
-            debug!("subordinate_node_count of starting node: {:#x}", self.crs.immediate_command(subordinate_node_count_start));
-            debug!("vendor_id: {:#x}", self.crs.immediate_command(vendor_id));
-        }
-
-        /* potential ways to write to a buffer (don't compile yet)
-
-        let wav = include_bytes!("test.wav");
-        let phys_addr = current_process().address_space().translate(VirtAddr::new(wav.as_ptr() as u64)).unwrap();
-
-        let audio_buffer = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
-        let phys_addr = current_process().address_space().translate(VirtAddr::new(audio_buffer.as_ptr() as u64)).unwrap();
-
-        */
         unsafe{
-            let codecs = self.scan();
+            let codecs = self.scan_for_available_codecs();
             for codec in codecs {
+                let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, 0);
+                debug!("ROOT NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
+                for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+                    let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, node_id);
+                    debug!("FG NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
+                    for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+                        let widget = self.audio_widget_capabilities(codec.codec_address, node_id);
+                        debug!("WIDGET: max number supported channels: {}", widget.max_number_of_channels());
 
+                    }
+                }
             }
         }
 
-        // wait two minutes so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
+        // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
         Timer::wait(120000);
 
     }
@@ -572,13 +626,68 @@ impl IHDA {
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
-    unsafe fn scan(&self) -> Vec<RootNode> {
-        let mut codecs: Vec<RootNode> = Vec::new();
+    fn scan_for_available_codecs(&self) -> Vec<Codec> {
+        let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
-            if self.crs.wakests.assert_bit(index) {
-                codecs.push(RootNode::new(index));
+            unsafe {
+                if self.crs.wakests.assert_bit(index) {
+                    codecs.push(Codec { codec_address: index });
+                }
             }
         }
         codecs
+    }
+
+    // IHDA Commands
+
+    fn subordinate_node_count(&self, codec_address: u8, node_id: u8) -> (u8, u8) {
+        let command = Command { codec_address, node_id, verb: 0xF00, parameter: 4 };
+        let response;
+        unsafe {
+            response = self.crs.immediate_command(command);
+        }
+        let starting_node_number = (response >> 16).bitand(0xFF) as u8;
+        let total_number_of_nodes = response.bitand(0xFF) as u8;
+        (starting_node_number, total_number_of_nodes)
+    }
+
+    fn audio_widget_capabilities(&self, codec_address: u8, node_id: u8) -> WidgetNode {
+        let command = Command { codec_address, node_id, verb: 0xF00, parameter: 9 };
+        let response;
+        unsafe {
+            response = self.crs.immediate_command(command);
+        }
+        let widget_type = match (response >> 20).bitand(0xF) as u8 {
+            0x0 => WidgetType::AudioOutput,
+            0x1 => WidgetType::AudioInput,
+            0x2 => WidgetType::AudioMixer,
+            0x3 => WidgetType::AudioSelector,
+            0x4 => WidgetType::PinComplex,
+            0x5 => WidgetType::PowerWidget,
+            0x6 => WidgetType::VolumeKnobWidget,
+            0x7 => WidgetType::BeepGeneratorWidget,
+            0xF => WidgetType::VendorDefinedAudioWidget,
+            _ => panic!("Unsupported widget type!")
+        };
+
+        WidgetNode {
+            node_id,
+            widget_type,
+            delay: (response >> 16).bitand(0xF) as u8,
+            chan_count_ext: (response >> 13).bitand(0xFF) as u8,
+            cp_caps: (response >> 12).bitand(0x1) != 0,
+            lr_swap: (response >> 11).bitand(0x1) != 0,
+            power_cntrl: (response >> 10).bitand(0x1) != 0,
+            digital: (response >> 9).bitand(0x1) != 0,
+            conn_list: (response >> 8).bitand(0x1) != 0,
+            unsol_capable: (response >> 7).bitand(0x1) != 0,
+            proc_widget: (response >> 6).bitand(0x1) != 0,
+            stripe: (response >> 5).bitand(0x1) != 0,
+            format_override: (response >> 4).bitand(0x1) != 0,
+            amp_param_override: (response >> 3).bitand(0x1) != 0,
+            out_amp_present: (response >> 2).bitand(0x1) != 0,
+            in_amp_present: (response >> 1).bitand(0x1) != 0,
+            chan_count_lsb: response.bitand(0x1) != 0,
+        }
     }
 }
