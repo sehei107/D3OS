@@ -227,10 +227,18 @@ impl Command {
 
 struct Codec {
     pub codec_address: u8,
+    pub root_node: RootNode,
+    pub function_group_nodes: Vec<FunctionGroupNode>,
 }
 
-trait Node {
-    fn get_node_id(&self) -> u8;
+impl Codec {
+    pub fn new(codec_address: u8, root_node: RootNode, function_group_nodes: Vec<FunctionGroupNode>) -> Self {
+        Codec {
+            codec_address,
+            root_node,
+            function_group_nodes,
+        }
+    }
 }
 
 struct RootNode {
@@ -239,7 +247,7 @@ struct RootNode {
 }
 
 impl RootNode {
-    fn new(codec_address: u8) -> RootNode {
+    fn new(codec_address: u8) -> Self {
         RootNode {
             codec_address,
             node_id: 0,
@@ -247,20 +255,10 @@ impl RootNode {
     }
 }
 
-impl Node for RootNode {
-    fn get_node_id(&self) -> u8 {
-        self.node_id
-    }
-}
-
 struct FunctionGroupNode {
+    pub codec_address: u8,
     pub node_id: u8,
-}
-
-impl Node for FunctionGroupNode {
-    fn get_node_id(&self) -> u8 {
-        self.node_id
-    }
+    pub widgets: Vec<WidgetNode>,
 }
 
 enum WidgetType {
@@ -299,12 +297,6 @@ impl WidgetNode {
     pub fn max_number_of_channels(&self) -> u8 {
         // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
         (self.chan_count_ext << 1) + (self.chan_count_lsb as u8) + 1
-    }
-}
-
-impl Node for WidgetNode {
-    fn get_node_id(&self) -> u8 {
-        self.node_id
     }
 }
 
@@ -444,19 +436,8 @@ impl IHDA {
 
         // interview sound card
         let codecs = self.scan_for_available_codecs();
-        for codec in codecs {
-            let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, 0);
-            debug!("ROOT NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
-            for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-                let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec.codec_address, node_id);
-                debug!("FG NODE: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
-                for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-                    let widget = self.audio_widget_capabilities(codec.codec_address, node_id);
-                    debug!("WIDGET: max number supported channels: {}", widget.max_number_of_channels());
 
-                }
-            }
-        }
+        debug!("codec address: {}", codecs.get(0).unwrap().codec_address);
 
         // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
         Timer::wait(120000);
@@ -616,17 +597,53 @@ impl IHDA {
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
+    // then find all function group nodes and widgets associated with a codec
     fn scan_for_available_codecs(&self) -> Vec<Codec> {
         let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
             unsafe {
                 if self.crs.wakests.assert_bit(index) {
-                    codecs.push(Codec { codec_address: index });
+                    let root_node = RootNode::new(index);
+                    let function_group_nodes = self.scan_codec_for_available_function_groups(&root_node);
+                    codecs.push(Codec {
+                        codec_address: index,
+                        root_node,
+                        function_group_nodes,
+                    });
                 }
             }
         }
         codecs
     }
+
+    fn scan_codec_for_available_function_groups(&self, root_node: &RootNode) -> Vec<FunctionGroupNode> {
+        let codec_address = root_node.codec_address;
+        let node_id = root_node.node_id;
+        let mut function_group_nodes: Vec<FunctionGroupNode> = Vec::new();
+        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec_address, node_id);
+        debug!("Available FG NODES: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
+        for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+            let widgets = self.scan_function_group_for_available_widgets(codec_address, node_id);
+            function_group_nodes.push(FunctionGroupNode {
+                codec_address,
+                node_id,
+                widgets,
+            });
+        }
+        function_group_nodes
+    }
+
+    fn scan_function_group_for_available_widgets(&self, codec_address: u8, node_id: u8) -> Vec<WidgetNode> {
+        let mut widgets: Vec<WidgetNode> = Vec::new();
+        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec_address, node_id);
+
+        for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+            widgets.push(self.audio_widget_capabilities(codec_address, node_id));
+        }
+        widgets
+    }
+
+
 
     // IHDA Commands
 
