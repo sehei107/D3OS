@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
 use core::ops::BitOr;
-use log::debug;
+use log::{debug, info};
 use num_traits::int::PrimInt;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
@@ -318,9 +318,110 @@ impl IHDA {
     }
 
     pub fn init(&self) {
-        // set controller reset bit (CRST)
+        info!("Initializing IHDA sound card");
+        self.reset_controller();
+        info!("IHDA Controller reset complete");
+
+        self.setup_ihda_config_space();
+        info!("IHDA configuration space set up");
+
         unsafe {
-            self.crs.gctl.clear_all_bits();
+            self.setup_corb();
+            self.setup_rirb();
+            self.start_corb();
+            self.start_rirb();
+        }
+        info!("CORB and RIRB setup and running");
+
+
+
+        let subordinate_node_count_root = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
+        let subordinate_node_count_start = Command { codec_address: 0, node_id: 1, verb: 0xF00, parameter: 4 };     // subordinate node count
+        let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
+
+        // send verb via CORB
+        unsafe {
+            let first_entry = self.crs.corblbase.read() as *mut u32;
+            let second_entry = (self.crs.corblbase.read() + 4) as *mut u32;
+            let third_entry = (self.crs.corblbase.read() + 8) as *mut u32;
+            let fourth_entry = (self.crs.corblbase.read() + 12) as *mut u32;
+            // debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
+            // debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
+            // debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
+            // debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
+            // debug!("CORB before: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
+            debug!("RIRB before: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
+            // debug!("RIRB before: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
+            second_entry.write(vendor_id.value());
+            third_entry.write(subordinate_node_count_root.value());
+            self.crs.corbwp.write(self.crs.corbwp.read() + 2);
+            // self.crs.corbctl.write(self.crs.corbctl.read() | 0b1);
+            // debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
+            // debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
+            // debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
+            // debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
+            // debug!("CORB after: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
+            // debug!("RIRB after: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
+            // debug!("RIRB after: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
+        }
+
+        unsafe {
+            self.crs.gctl.dump();
+            self.crs.intctl.dump();
+            self.crs.wakeen.dump();
+            self.crs.corbctl.dump();
+            self.crs.rirbctl.dump();
+            self.crs.corbsize.dump();
+            self.crs.rirbsize.dump();
+            self.crs.corbsts.dump();
+
+            self.crs.corbwp.dump();
+            // expect the CORBRP to be equal to CORBWP if sending commands was successful
+            self.crs.corbrp.dump();
+            self.crs.corblbase.dump();
+            self.crs.corbubase.dump();
+
+            self.crs.rirbwp.dump();
+            self.crs.rirblbase.dump();
+            self.crs.rirbubase.dump();
+
+            self.crs.walclk.dump();
+            debug!("RIRB after: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
+            debug!("RIRB after (next entries): {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
+        }
+
+        // send command via Immediate Command Registers
+
+        unsafe {
+            debug!("subordinate_node_count of root node: {:#x}", self.crs.immediate_command(subordinate_node_count_root));
+            debug!("subordinate_node_count of starting node: {:#x}", self.crs.immediate_command(subordinate_node_count_start));
+            debug!("vendor_id: {:#x}", self.crs.immediate_command(vendor_id));
+        }
+
+        /* potential ways to write to a buffer (don't compile yet)
+
+        let wav = include_bytes!("test.wav");
+        let phys_addr = current_process().address_space().translate(VirtAddr::new(wav.as_ptr() as u64)).unwrap();
+
+        let audio_buffer = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
+        let phys_addr = current_process().address_space().translate(VirtAddr::new(audio_buffer.as_ptr() as u64)).unwrap();
+
+        */
+        unsafe{
+            let codecs = self.scan();
+            for codec in codecs {
+
+            }
+        }
+
+        // wait two minutes so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
+        Timer::wait(120000);
+
+    }
+
+    fn reset_controller(&self) {
+        unsafe {
+            // set controller reset bit (CRST)
             self.crs.gctl.set_bit(0);
             let start_timer = timer().read().systime_ms();
             // value for CRST_TIMEOUT arbitrarily chosen
@@ -330,13 +431,15 @@ impl IHDA {
                     panic!("IHDA controller reset timed out")
                 }
             }
-        }
-        // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
-        Timer::wait(1);
 
-        // set Flush Control (FCNTRL) and Accept Unsolicited Response Enable (UNSOL) bits
+            // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
+            Timer::wait(1);
+        }
+    }
+
+    fn setup_ihda_config_space(&self) {
+        // set Accept Unsolicited Response Enable (UNSOL) bit
         unsafe {
-            self.crs.gctl.set_bit(1);
             self.crs.gctl.set_bit(8);
         }
 
@@ -350,7 +453,9 @@ impl IHDA {
         unsafe {
             self.crs.wakeen.set_all_bits();
         }
+    }
 
+    fn setup_corb(&self) {
         // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
         unsafe {
             self.crs.corbctl.clear_all_bits();
@@ -376,28 +481,48 @@ impl IHDA {
                 }
             }
         }
+    }
 
-        // clear CORBWP and reset CORBRP
+    fn reset_corb(&self) {
+        // clear CORBWP
         unsafe {
             self.crs.corbwp.clear_all_bits();
+        }
 
+        //reset CORBRP
+        unsafe {
             self.crs.corbrp.set_bit(15);
             let start_timer = timer().read().systime_ms();
             // value for CORBRPRST_TIMEOUT arbitrarily chosen
-            const CORBRPRST_TIMEOUT: usize = 100;
-            while !self.crs.corbrp.assert_bit(15) {
+            const CORBRPRST_TIMEOUT: usize = 10000;
+            while self.crs.corbrp.read() != 0x0 {
                 if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
                     panic!("CORB read pointer reset timed out")
                 }
             }
-            self.crs.corbrp.clear_all_bits();
-            while self.crs.corbrp.assert_bit(15) {
-                if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
-                    panic!("CORB read pointer clear timed out")
-                }
-            }
-        }
+            // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
+            // actually you are supposed to do something like this:
 
+            // while !self.crs.corbrp.assert_bit(15) {
+            //     if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+            //         panic!("CORB read pointer reset timed out")
+            //     }
+            // }
+            // self.crs.corbrp.clear_all_bits();
+            // while self.crs.corbrp.assert_bit(15) {
+            //     if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+            //         panic!("CORB read pointer clear timed out")
+            //     }
+            // }
+
+            // but the physical sound card never writes a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
+            // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
+            // this is why the code now just checks if the register contains the value 0 after the reset
+            // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
+        }
+    }
+
+    fn setup_rirb(&self) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
         unsafe {
             self.crs.rirbctl.clear_all_bits();
@@ -426,94 +551,24 @@ impl IHDA {
         unsafe {
             self.crs.rirbwp.set_bit(15);
         }
+    }
 
-        // start CORB and RIRB
+
+    fn start_corb(&self) {
         unsafe {
             // set CORBRUN and CMEIE bits
             self.crs.corbctl.set_bit(0);
             self.crs.corbctl.set_bit(1);
+
+        }
+    }
+    fn start_rirb(&self) {
+        unsafe {
             // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
             self.crs.rirbctl.set_bit(0);
             self.crs.rirbctl.set_bit(1);
             self.crs.rirbctl.set_bit(2);
         }
-
-        let subordinate_node_count_root = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 4 };     // subordinate node count
-        let subordinate_node_count_start = Command { codec_address: 0, node_id: 1, verb: 0xF00, parameter: 4 };     // subordinate node count
-        let vendor_id = Command { codec_address: 0, node_id: 0, verb: 0xF00, parameter: 0 };    // vendor id
-
-        // send verb via CORB
-        unsafe {
-            let first_entry = self.crs.corblbase.read() as *mut u32;
-            let second_entry = (self.crs.corblbase.read() + 4) as *mut u32;
-            let third_entry = (self.crs.corblbase.read() + 8) as *mut u32;
-            let fourth_entry = (self.crs.corblbase.read() + 12) as *mut u32;
-            debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
-            debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
-            debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
-            debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
-            debug!("CORB before: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
-            debug!("RIRB before: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
-            debug!("RIRB before: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
-            second_entry.write(vendor_id.value());
-            third_entry.write(subordinate_node_count_root.value());
-            self.crs.corbwp.write(self.crs.corbwp.read() + 2);
-            self.crs.corbctl.write(self.crs.corbctl.read() | 0b1);
-            debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
-            debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
-            debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
-            debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
-            debug!("CORB after: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
-            debug!("RIRB after: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
-            debug!("RIRB after: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
-        }
-
-        unsafe {
-            self.crs.gctl.dump();
-            self.crs.wakeen.dump();
-            self.crs.corbctl.dump();
-            self.crs.rirbctl.dump();
-            self.crs.corbsize.dump();
-            self.crs.rirbsize.dump();
-            self.crs.corbsts.dump();
-
-            self.crs.corbwp.dump();
-            // expect the CORBRP to be equal to CORBWP if sending commands was successful
-            self.crs.corbrp.dump();
-            self.crs.corblbase.dump();
-            self.crs.corbubase.dump();
-
-            self.crs.rirbwp.dump();
-            self.crs.rirblbase.dump();
-            self.crs.rirbubase.dump();
-
-            self.crs.walclk.dump();
-        }
-
-        // send command via Immediate Command Registers
-
-        unsafe {
-            debug!("subordinate_node_count of root node: {:#x}", self.crs.immediate_command(subordinate_node_count_root));
-            debug!("subordinate_node_count of starting node: {:#x}", self.crs.immediate_command(subordinate_node_count_start));
-            debug!("vendor_id: {:#x}", self.crs.immediate_command(vendor_id));
-        }
-
-        /* potential ways to write to a buffer (don't compile yet)
-
-        let wav = include_bytes!("test.wav");
-        let phys_addr = current_process().address_space().translate(VirtAddr::new(wav.as_ptr() as u64)).unwrap();
-
-        let audio_buffer = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
-        let phys_addr = current_process().address_space().translate(VirtAddr::new(audio_buffer.as_ptr() as u64)).unwrap();
-
-        */
-        unsafe{
-            let codecs = self.scan();
-            for codec in codecs {
-
-            }
-        }
-
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
