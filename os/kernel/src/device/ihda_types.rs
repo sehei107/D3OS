@@ -192,6 +192,22 @@ impl ControllerRegisterSet {
     }
 }
 
+#[derive(Getters)]
+pub struct NodeAddress {
+    codec_address: u8,
+    node_id: u8,
+}
+
+impl NodeAddress {
+    pub fn new(codec_address: u8, node_id: u8) -> Self {
+        NodeAddress {
+            codec_address,
+            node_id,
+        }
+    }
+}
+
+#[derive(Getters)]
 pub struct Command {
     codec_address: u8,
     node_id: u8,
@@ -200,10 +216,10 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn new(codec_address: u8, node_id: u8, verb: u16, parameter: u8,) -> Self {
+    pub fn new(address: &NodeAddress, verb: u16, parameter: u8,) -> Self {
         Command {
-            codec_address,
-            node_id,
+            codec_address: address.codec_address,
+            node_id: address.node_id,
             verb,
             parameter,
         }
@@ -214,6 +230,7 @@ impl Command {
     }
 }
 
+#[derive(Getters)]
 pub struct Codec {
     pub codec_address: u8,
     pub root_node: RootNode,
@@ -230,24 +247,31 @@ impl Codec {
     }
 }
 
+#[derive(Getters)]
 pub struct RootNode {
-    pub codec_address: u8,
-    pub node_id: u8,
+    address: NodeAddress,
 }
 
 impl RootNode {
     pub fn new(codec_address: u8) -> Self {
         RootNode {
-            codec_address,
-            node_id: 0,
+            address: NodeAddress::new(codec_address, 0),
         }
     }
 }
 
 pub struct FunctionGroupNode {
-    pub codec_address: u8,
-    pub node_id: u8,
+    address: NodeAddress,
     pub widgets: Vec<WidgetNode>,
+}
+
+impl FunctionGroupNode {
+    pub fn new(address: NodeAddress, widgets: Vec<WidgetNode>) -> Self {
+        FunctionGroupNode {
+            address,
+            widgets
+        }
+    }
 }
 
 enum WidgetType {
@@ -263,8 +287,7 @@ enum WidgetType {
 }
 
 pub struct WidgetNode {
-    codec_address: u8,
-    node_id: u8,
+    address: NodeAddress,
     widget_type: WidgetType,
     delay: u8,
     chan_count_ext: u8,
@@ -284,7 +307,7 @@ pub struct WidgetNode {
 }
 
 impl WidgetNode {
-    pub fn new(codec_address: u8, node_id: u8, response: u32) -> Self {
+    pub fn new(address: NodeAddress, response: u32) -> Self {
         let widget_type = match (response >> 20).bitand(0xF) as u8 {
             0x0 => WidgetType::AudioOutput,
             0x1 => WidgetType::AudioInput,
@@ -299,8 +322,7 @@ impl WidgetNode {
         };
 
         WidgetNode {
-            codec_address,
-            node_id,
+            address,
             widget_type,
             delay: (response >> 16).bitand(0xF) as u8,
             chan_count_ext: (response >> 13).bitand(0xFF) as u8,

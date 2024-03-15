@@ -11,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, RootNode, WidgetNode};
+use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress, RootNode, WidgetNode};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -106,9 +106,9 @@ impl IHDA {
         info!("CORB and RIRB set up and running");
 
 
-
-        let subordinate_node_count_root = Command::new(0, 0, 0xF00, 4 );     // subordinate node count
-        let vendor_id = Command::new(0, 0, 0xF00, 0 );                       // vendor id
+        let root_node_address = NodeAddress::new(0, 0);
+        let subordinate_node_count_root = Command::new(&root_node_address, 0xF00, 4 );     // subordinate node count
+        let vendor_id = Command::new(&root_node_address, 0xF00, 0 );                       // vendor id
 
         // send verb via CORB
         unsafe {
@@ -344,28 +344,26 @@ impl IHDA {
     }
 
     fn scan_codec_for_available_function_groups(&self, root_node: &RootNode) -> Vec<FunctionGroupNode> {
-        let codec_address = root_node.codec_address;
-        let node_id = root_node.node_id;
         let mut function_group_nodes: Vec<FunctionGroupNode> = Vec::new();
-        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec_address, node_id);
+        let codec_address = *root_node.address().codec_address();
+        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(root_node.address());
         debug!("Available FG NODES: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
         for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-            let widgets = self.scan_function_group_for_available_widgets(codec_address, node_id);
-            function_group_nodes.push(FunctionGroupNode {
-                codec_address,
-                node_id,
-                widgets,
-            });
+            let fg_address = NodeAddress::new(codec_address, node_id);
+            let widgets = self.scan_function_group_for_available_widgets(&fg_address);
+            function_group_nodes.push(FunctionGroupNode::new(fg_address, widgets));
         }
         function_group_nodes
     }
 
-    fn scan_function_group_for_available_widgets(&self, codec_address: u8, node_id: u8) -> Vec<WidgetNode> {
+    fn scan_function_group_for_available_widgets(&self, address: &NodeAddress) -> Vec<WidgetNode> {
         let mut widgets: Vec<WidgetNode> = Vec::new();
-        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(codec_address, node_id);
+        let codec_address = *address.codec_address();
+        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(&address);
 
         for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
-            widgets.push(self.audio_widget_capabilities(codec_address, node_id));
+            let widget_address = NodeAddress::new(codec_address, node_id);
+            widgets.push(self.audio_widget_capabilities(widget_address));
         }
         widgets
     }
@@ -374,8 +372,8 @@ impl IHDA {
 
     // IHDA Commands
 
-    fn subordinate_node_count(&self, codec_address: u8, node_id: u8) -> (u8, u8) {
-        let command = Command::new(codec_address, node_id, 0xF00, 4);
+    fn subordinate_node_count(&self, address: &NodeAddress) -> (u8, u8) {
+        let command = Command::new(address, 0xF00, 4);
         let response;
         unsafe {
             response = self.crs.immediate_command(command);
@@ -385,12 +383,12 @@ impl IHDA {
         (starting_node_number, total_number_of_nodes)
     }
 
-    fn audio_widget_capabilities(&self, codec_address: u8, node_id: u8) -> WidgetNode {
-        let command = Command::new(codec_address, node_id, 0xF00, 9);
+    fn audio_widget_capabilities(&self, address: NodeAddress) -> WidgetNode {
+        let command = Command::new(&address, 0xF00, 9);
         let response;
         unsafe {
             response = self.crs.immediate_command(command);
         }
-        WidgetNode::new(codec_address, node_id, response)
+        WidgetNode::new(address, response)
     }
 }
