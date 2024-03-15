@@ -9,3 +9,4 @@ pub mod lfb_terminal;
 pub mod serial;
 pub mod pci;
 pub mod ihda;
+pub mod ihda_types;
