@@ -164,7 +164,7 @@ impl IHDA {
         // interview sound card
         let codecs = self.scan_for_available_codecs();
 
-        debug!("codec address: {}", codecs.get(0).unwrap().codec_address);
+        debug!("codec address: {}", codecs.get(0).unwrap().codec_address());
 
         // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
         Timer::wait(120000);
@@ -332,11 +332,7 @@ impl IHDA {
                 if self.crs.wakests().assert_bit(index) {
                     let root_node = RootNode::new(index);
                     let function_group_nodes = self.scan_codec_for_available_function_groups(&root_node);
-                    codecs.push(Codec {
-                        codec_address: index,
-                        root_node,
-                        function_group_nodes,
-                    });
+                    codecs.push(Codec::new(index, root_node, function_group_nodes));
                 }
             }
         }

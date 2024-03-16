@@ -232,9 +232,9 @@ impl Command {
 
 #[derive(Getters)]
 pub struct Codec {
-    pub codec_address: u8,
-    pub root_node: RootNode,
-    pub function_group_nodes: Vec<FunctionGroupNode>,
+    codec_address: u8,
+    root_node: RootNode,
+    function_group_nodes: Vec<FunctionGroupNode>,
 }
 
 impl Codec {
@@ -262,7 +262,7 @@ impl RootNode {
 
 pub struct FunctionGroupNode {
     address: NodeAddress,
-    pub widgets: Vec<WidgetNode>,
+    widgets: Vec<WidgetNode>,
 }
 
 impl FunctionGroupNode {
