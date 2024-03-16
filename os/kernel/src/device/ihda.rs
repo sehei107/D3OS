@@ -11,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ParameterType, RootNode, WidgetNode};
+use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress,  Response, RootNode, WidgetNode};
 use crate::device::ihda_types::ParameterType::{SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -384,7 +384,7 @@ impl IHDA {
         let command = Command::new(&address, 0xF00, 9);
         let response;
         unsafe {
-            response = self.crs.immediate_command(command);
+            response = Response::new(self.crs.immediate_command(command));
         }
         WidgetNode::new(address, response)
     }

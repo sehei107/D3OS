@@ -234,6 +234,23 @@ impl Command {
     }
 }
 
+
+pub struct Response {
+    value: u32,
+}
+
+impl Response {
+    pub fn new(value: u32) -> Self {
+        Response {
+            value,
+        }
+    }
+
+    pub fn value(&self) -> u32 {
+        self.value
+    }
+}
+
 // compare to table 140 in section 7.3.6 of the specification
 pub enum ParameterType {
     VendorId,
@@ -381,8 +398,9 @@ impl Node for WidgetNode {
 }
 
 impl WidgetNode {
-    pub fn new(address: NodeAddress, response: u32) -> Self {
-        let widget_type = match (response >> 20).bitand(0xF) as u8 {
+    pub fn new(address: NodeAddress, response: Response) -> Self {
+        let value = response.value();
+        let widget_type = match (value >> 20).bitand(0xF) as u8 {
             0x0 => WidgetType::AudioOutput,
             0x1 => WidgetType::AudioInput,
             0x2 => WidgetType::AudioMixer,
@@ -398,21 +416,21 @@ impl WidgetNode {
         WidgetNode {
             address,
             widget_type,
-            delay: (response >> 16).bitand(0xF) as u8,
-            chan_count_ext: (response >> 13).bitand(0xFF) as u8,
-            cp_caps: (response >> 12).bitand(0x1) != 0,
-            lr_swap: (response >> 11).bitand(0x1) != 0,
-            power_cntrl: (response >> 10).bitand(0x1) != 0,
-            digital: (response >> 9).bitand(0x1) != 0,
-            conn_list: (response >> 8).bitand(0x1) != 0,
-            unsol_capable: (response >> 7).bitand(0x1) != 0,
-            proc_widget: (response >> 6).bitand(0x1) != 0,
-            stripe: (response >> 5).bitand(0x1) != 0,
-            format_override: (response >> 4).bitand(0x1) != 0,
-            amp_param_override: (response >> 3).bitand(0x1) != 0,
-            out_amp_present: (response >> 2).bitand(0x1) != 0,
-            in_amp_present: (response >> 1).bitand(0x1) != 0,
-            chan_count_lsb: response.bitand(0x1) != 0,
+            delay: (value >> 16).bitand(0xF) as u8,
+            chan_count_ext: (value >> 13).bitand(0xFF) as u8,
+            cp_caps: (value >> 12).bitand(0x1) != 0,
+            lr_swap: (value >> 11).bitand(0x1) != 0,
+            power_cntrl: (value >> 10).bitand(0x1) != 0,
+            digital: (value >> 9).bitand(0x1) != 0,
+            conn_list: (value >> 8).bitand(0x1) != 0,
+            unsol_capable: (value >> 7).bitand(0x1) != 0,
+            proc_widget: (value >> 6).bitand(0x1) != 0,
+            stripe: (value >> 5).bitand(0x1) != 0,
+            format_override: (value >> 4).bitand(0x1) != 0,
+            amp_param_override: (value >> 3).bitand(0x1) != 0,
+            out_amp_present: (value >> 2).bitand(0x1) != 0,
+            in_amp_present: (value >> 1).bitand(0x1) != 0,
+            chan_count_lsb: value.bitand(0x1) != 0,
         }
     }
 
