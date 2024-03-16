@@ -225,8 +225,55 @@ impl Command {
         }
     }
 
+    pub fn get_parameter(address: &NodeAddress, parameter: ParameterType) -> Self {
+        Command::new(address, 0xF00, parameter.parameter_id())
+    }
+
     pub fn value(&self) -> u32 {
         (self.codec_address as u32) << 28 | (self.node_id as u32) << 20 | (self.verb as u32) << 8 | self.parameter as u32
+    }
+}
+
+// compare to table 140 in section 7.3.6 of the specification
+pub enum ParameterType {
+    VendorId,
+    RevisionId,
+    SubordinateNodeCount,
+    FunctionGroupType,
+    AudioFunctionGroupCapabilities,
+    AudioWidgetCapabilities,
+    SampleSizeRateCAPs,
+    StreamFormats,
+    PinCapabilities,
+    InputAmpCapabilities,
+    OutputAmpCapabilities,
+    ConnectionLengthList,
+    SupportedPowerStates,
+    ProcessingCapabilities,
+    GPIOCount,
+    VolumeKnobCapabilities,
+}
+
+impl ParameterType {
+    pub fn parameter_id(&self) -> u8 {
+        match self {
+            ParameterType::VendorId => 0x00,
+            ParameterType::RevisionId => 0x02,
+            ParameterType::SubordinateNodeCount => 0x04,
+            ParameterType::FunctionGroupType => 0x05,
+            ParameterType::AudioFunctionGroupCapabilities => 0x08,
+            ParameterType::AudioWidgetCapabilities => 0x09,
+            ParameterType::SampleSizeRateCAPs => 0x0A,
+            ParameterType::StreamFormats => 0x0B,
+            ParameterType::PinCapabilities => 0x0C,
+            ParameterType::InputAmpCapabilities => 0x0D,
+            ParameterType::OutputAmpCapabilities => 0x12,
+            ParameterType::ConnectionLengthList => 0x0E,
+            ParameterType::SupportedPowerStates => 0x0F,
+            ParameterType::ProcessingCapabilities => 0x10,
+            ParameterType::GPIOCount => 0x11,
+            ParameterType::VolumeKnobCapabilities => 0x13,
+        }
     }
 }
 
@@ -247,9 +294,19 @@ impl Codec {
     }
 }
 
+pub trait Node {
+    fn address(&self) -> &NodeAddress;
+}
+
 #[derive(Getters)]
 pub struct RootNode {
     address: NodeAddress,
+}
+
+impl Node for RootNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
 }
 
 impl RootNode {
@@ -258,11 +315,22 @@ impl RootNode {
             address: NodeAddress::new(codec_address, 0),
         }
     }
+
+    pub fn get_parameter(&self, parameter: ParameterType,) -> Command {
+        Command::get_parameter(self.address(), parameter)
+    }
 }
 
+#[derive(Getters)]
 pub struct FunctionGroupNode {
     address: NodeAddress,
     widgets: Vec<WidgetNode>,
+}
+
+impl Node for FunctionGroupNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
 }
 
 impl FunctionGroupNode {
@@ -306,6 +374,12 @@ pub struct WidgetNode {
     chan_count_lsb: bool,
 }
 
+impl Node for WidgetNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
+}
+
 impl WidgetNode {
     pub fn new(address: NodeAddress, response: u32) -> Self {
         let widget_type = match (response >> 20).bitand(0xF) as u8 {
@@ -346,4 +420,8 @@ impl WidgetNode {
         // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
         (self.chan_count_ext << 1) + (self.chan_count_lsb as u8) + 1
     }
+}
+
+fn subordinate_node_count<T: Node>(node: &T) -> Command {
+    Command::get_parameter(node.address(), ParameterType::SubordinateNodeCount)
 }

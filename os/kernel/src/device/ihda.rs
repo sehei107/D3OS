@@ -11,7 +11,8 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress, RootNode, WidgetNode};
+use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ParameterType, RootNode, WidgetNode};
+use crate::device::ihda_types::ParameterType::{SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -106,9 +107,9 @@ impl IHDA {
         info!("CORB and RIRB set up and running");
 
 
-        let root_node_address = NodeAddress::new(0, 0);
-        let subordinate_node_count_root = Command::new(&root_node_address, 0xF00, 4 );     // subordinate node count
-        let vendor_id = Command::new(&root_node_address, 0xF00, 0 );                       // vendor id
+        let root_node = RootNode::new(0);
+        let subordinate_node_count_root = root_node.get_parameter(SubordinateNodeCount);
+        let vendor_id = root_node.get_parameter(VendorId);
 
         // send verb via CORB
         unsafe {
@@ -369,7 +370,7 @@ impl IHDA {
     // IHDA Commands
 
     fn subordinate_node_count(&self, address: &NodeAddress) -> (u8, u8) {
-        let command = Command::new(address, 0xF00, 4);
+        let command = Command::get_parameter(address, SubordinateNodeCount);
         let response;
         unsafe {
             response = self.crs.immediate_command(command);
