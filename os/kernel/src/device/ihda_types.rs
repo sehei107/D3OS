@@ -225,8 +225,8 @@ impl Command {
         }
     }
 
-    pub fn get_parameter(address: &NodeAddress, parameter: ParameterType) -> Self {
-        Command::new(address, 0xF00, parameter.parameter_id())
+    pub fn get_parameter(address: &NodeAddress, parameter: Parameter) -> Self {
+        Command::new(address, 0xF00, parameter.id())
     }
 
     pub fn value(&self) -> u32 {
@@ -252,7 +252,7 @@ impl Response {
 }
 
 // compare to table 140 in section 7.3.6 of the specification
-pub enum ParameterType {
+pub enum Parameter {
     VendorId,
     RevisionId,
     SubordinateNodeCount,
@@ -271,25 +271,25 @@ pub enum ParameterType {
     VolumeKnobCapabilities,
 }
 
-impl ParameterType {
-    pub fn parameter_id(&self) -> u8 {
+impl Parameter {
+    pub fn id(&self) -> u8 {
         match self {
-            ParameterType::VendorId => 0x00,
-            ParameterType::RevisionId => 0x02,
-            ParameterType::SubordinateNodeCount => 0x04,
-            ParameterType::FunctionGroupType => 0x05,
-            ParameterType::AudioFunctionGroupCapabilities => 0x08,
-            ParameterType::AudioWidgetCapabilities => 0x09,
-            ParameterType::SampleSizeRateCAPs => 0x0A,
-            ParameterType::StreamFormats => 0x0B,
-            ParameterType::PinCapabilities => 0x0C,
-            ParameterType::InputAmpCapabilities => 0x0D,
-            ParameterType::OutputAmpCapabilities => 0x12,
-            ParameterType::ConnectionLengthList => 0x0E,
-            ParameterType::SupportedPowerStates => 0x0F,
-            ParameterType::ProcessingCapabilities => 0x10,
-            ParameterType::GPIOCount => 0x11,
-            ParameterType::VolumeKnobCapabilities => 0x13,
+            Parameter::VendorId => 0x00,
+            Parameter::RevisionId => 0x02,
+            Parameter::SubordinateNodeCount => 0x04,
+            Parameter::FunctionGroupType => 0x05,
+            Parameter::AudioFunctionGroupCapabilities => 0x08,
+            Parameter::AudioWidgetCapabilities => 0x09,
+            Parameter::SampleSizeRateCAPs => 0x0A,
+            Parameter::StreamFormats => 0x0B,
+            Parameter::PinCapabilities => 0x0C,
+            Parameter::InputAmpCapabilities => 0x0D,
+            Parameter::OutputAmpCapabilities => 0x12,
+            Parameter::ConnectionLengthList => 0x0E,
+            Parameter::SupportedPowerStates => 0x0F,
+            Parameter::ProcessingCapabilities => 0x10,
+            Parameter::GPIOCount => 0x11,
+            Parameter::VolumeKnobCapabilities => 0x13,
         }
     }
 }
@@ -333,7 +333,7 @@ impl RootNode {
         }
     }
 
-    pub fn get_parameter(&self, parameter: ParameterType,) -> Command {
+    pub fn get_parameter(&self, parameter: Parameter) -> Command {
         Command::get_parameter(self.address(), parameter)
     }
 }
@@ -441,5 +441,5 @@ impl WidgetNode {
 }
 
 fn subordinate_node_count<T: Node>(node: &T) -> Command {
-    Command::get_parameter(node.address(), ParameterType::SubordinateNodeCount)
+    Command::get_parameter(node.address(), Parameter::SubordinateNodeCount)
 }
