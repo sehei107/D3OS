@@ -217,6 +217,9 @@ pub struct Command {
 
 impl Command {
     pub fn new(address: &NodeAddress, verb: u16, parameter: u8,) -> Self {
+        if verb & 0xF000 != 0 {
+            panic!("Verb identifier can only be 12 bits long! See specification, section 7.3 Codec Parameters and Controls")
+        }
         Command {
             codec_address: address.codec_address,
             node_id: address.node_id,
