@@ -2,7 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::ops::{BitAnd, BitOr};
+use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
@@ -11,8 +11,8 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, Command, ControllerRegisterSet, FunctionGroupNode, NodeAddress, Response, RootNode, WidgetNode};
-use crate::device::ihda_types::Parameter::{SubordinateNodeCount, VendorId};
+use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetNode};
+use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -106,66 +106,15 @@ impl IHDA {
 
         info!("CORB and RIRB set up and running");
 
-
-        let root_node = RootNode::new(0);
-        let subordinate_node_count_root = root_node.get_parameter(SubordinateNodeCount);
-        let vendor_id = root_node.get_parameter(VendorId);
-
-        // send verb via CORB
-        unsafe {
-            // let first_entry = self.crs.corblbase.read() as *mut u32;
-            let second_entry = (self.crs.corblbase().read() + 4) as *mut u32;
-            let third_entry = (self.crs.corblbase().read() + 8) as *mut u32;
-            // let fourth_entry = (self.crs.corblbase.read() + 12) as *mut u32;
-            // debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
-            // debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
-            // debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
-            // debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
-            // debug!("CORB before: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
-            debug!("RIRB before: {:#x}", (self.crs.rirblbase().read() as *mut u128).read());
-            // debug!("RIRB before: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
-            second_entry.write(vendor_id.value());
-            third_entry.write(subordinate_node_count_root.value());
-            self.crs.corbwp().write(self.crs.corbwp().read() + 2);
-            // self.crs.corbctl.write(self.crs.corbctl.read() | 0b1);
-            // debug!("first_entry: {:#x}, address: {:#x}", first_entry.read(), first_entry as u32);
-            // debug!("second_entry: {:#x}, address: {:#x}", second_entry.read(), second_entry as u32);
-            // debug!("third_entry: {:#x}, address: {:#x}", third_entry.read(), third_entry as u32);
-            // debug!("fourth_entry: {:#x}, address: {:#x}", fourth_entry.read(), fourth_entry as u32);
-            // debug!("CORB after: {:#x}, address: {:#x}", (first_entry as *mut u128).read(), first_entry as u32);
-            // debug!("RIRB after: {:#x}", (self.crs.rirblbase.read() as *mut u128).read());
-            // debug!("RIRB after: {:#x}", ((self.crs.rirblbase.read() + 16) as *mut u128).read());
-        }
-
-        unsafe {
-            self.crs.gctl().dump();
-            self.crs.intctl().dump();
-            self.crs.wakeen().dump();
-            self.crs.corbctl().dump();
-            self.crs.rirbctl().dump();
-            self.crs.corbsize().dump();
-            self.crs.rirbsize().dump();
-            self.crs.corbsts().dump();
-
-            self.crs.corbwp().dump();
-            // expect the CORBRP to be equal to CORBWP if sending commands was successful
-            self.crs.corbrp().dump();
-            self.crs.corblbase().dump();
-            self.crs.corbubase().dump();
-
-            self.crs.rirbwp().dump();
-            self.crs.rirblbase().dump();
-            self.crs.rirbubase().dump();
-
-            self.crs.walclk().dump();
-            debug!("RIRB after: {:#x}", (self.crs.rirblbase().read() as *mut u128).read());
-            debug!("RIRB after (next entries): {:#x}", ((self.crs.rirblbase().read() + 16) as *mut u128).read());
-        }
-
         // interview sound card
         let codecs = self.scan_for_available_codecs();
 
-        debug!("codec address: {}", codecs.get(0).unwrap().codec_address());
+        debug!("Find all widgets in first audio function group:");
+        for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
+            debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
+        }
+
+
 
         // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
         Timer::wait(120000);
@@ -331,61 +280,90 @@ impl IHDA {
         for index in 0..MAX_AMOUNT_OF_CODECS {
             unsafe {
                 if self.crs.wakests().assert_bit(index) {
-                    let root_node = RootNode::new(index);
-                    let function_group_nodes = self.scan_codec_for_available_function_groups(&root_node);
-                    codecs.push(Codec::new(index, root_node, function_group_nodes));
+                    let root_node_addr = NodeAddress::new(index, 0x0);
+                    let mut response;
+
+                    let vendor_id = CommandBuilder::get_parameter(&root_node_addr, VendorId);
+                    response = self.crs.immediate_command(vendor_id);
+                    let vendor_id_info = ResponseParser::get_parameter_vendor_id(response);
+
+                    let revision_id = CommandBuilder::get_parameter(&root_node_addr, RevisionId);
+                    response = self.crs.immediate_command(revision_id);
+                    let revision_id_info = ResponseParser::get_parameter_revision_id(response);
+
+                    let subordinate_node_count = CommandBuilder::get_parameter(&root_node_addr, SubordinateNodeCount);
+                    response = self.crs.immediate_command(subordinate_node_count);
+                    let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
+
+                    let function_group_nodes = self.scan_codec_for_available_function_groups(&root_node_addr, &subordinate_node_count_info);
+
+                    let root_node = RootNode::new(index, vendor_id_info, revision_id_info, subordinate_node_count_info, function_group_nodes);
+                    codecs.push(Codec::new(index, root_node));
                 }
             }
         }
         codecs
     }
 
-    fn scan_codec_for_available_function_groups(&self, root_node: &RootNode) -> Vec<FunctionGroupNode> {
-        let mut function_group_nodes: Vec<FunctionGroupNode> = Vec::new();
-        let codec_address = *root_node.address().codec_address();
-        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(root_node.address());
-        debug!("Available FG NODES: starting_node_number: {}, total_number_of_nodes: {}", starting_node_number, total_number_of_nodes);
-        for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+    fn scan_codec_for_available_function_groups(
+        &self,
+        root_node_addr: &NodeAddress,
+        snci: &SubordinateNodeCountInfo
+    ) -> Vec<FunctionGroupNode> {
+        let mut fg_nodes: Vec<FunctionGroupNode> = Vec::new();
+        let codec_address = *root_node_addr.codec_address();
+        let mut response;
+
+        for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let fg_address = NodeAddress::new(codec_address, node_id);
-            let widgets = self.scan_function_group_for_available_widgets(&fg_address);
-            function_group_nodes.push(FunctionGroupNode::new(fg_address, widgets));
+
+            unsafe {
+                let subordinate_node_count = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
+                response = self.crs.immediate_command(subordinate_node_count);
+                let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
+
+                let function_group_type = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
+                response = self.crs.immediate_command(function_group_type);
+                let function_group_type_info = ResponseParser::get_parameter_function_group_type(response);
+
+                let widgets = self.scan_function_group_for_available_widgets(&fg_address, &subordinate_node_count_info);
+
+                fg_nodes.push(FunctionGroupNode::new(fg_address, subordinate_node_count_info, function_group_type_info, widgets));
+            }
         }
-        function_group_nodes
+        fg_nodes
     }
 
-    fn scan_function_group_for_available_widgets(&self, address: &NodeAddress) -> Vec<WidgetNode> {
+    fn scan_function_group_for_available_widgets(
+        &self,
+        fg_addr: &NodeAddress,
+        snci: &SubordinateNodeCountInfo
+    ) -> Vec<WidgetNode> {
         let mut widgets: Vec<WidgetNode> = Vec::new();
-        let codec_address = *address.codec_address();
-        let (starting_node_number, total_number_of_nodes) = self.subordinate_node_count(&address);
+        let codec_address = *fg_addr.codec_address();
+        let mut response;
 
-        for node_id in starting_node_number..(starting_node_number + total_number_of_nodes) {
+        for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let widget_address = NodeAddress::new(codec_address, node_id);
-            widgets.push(self.audio_widget_capabilities(widget_address));
+
+            unsafe {
+                let audio_widget_capabilites = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
+                response = self.crs.immediate_command(audio_widget_capabilites);
+                let audio_widget_capabilities_info = ResponseParser::get_parameter_audio_widget_capabilities(response);
+                widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info));
+            }
         }
         widgets
     }
 
-
-
     // IHDA Commands
 
-    fn subordinate_node_count(&self, address: &NodeAddress) -> (u8, u8) {
-        let command = Command::get_parameter(address, SubordinateNodeCount);
+    fn subordinate_node_count(&self, node_address: &NodeAddress) -> SubordinateNodeCountInfo {
+        let command = CommandBuilder::get_parameter(node_address, SubordinateNodeCount);
         let response;
         unsafe {
             response = self.crs.immediate_command(command);
         }
-        let starting_node_number = (response >> 16).bitand(0xFF) as u8;
-        let total_number_of_nodes = response.bitand(0xFF) as u8;
-        (starting_node_number, total_number_of_nodes)
-    }
-
-    fn audio_widget_capabilities(&self, address: NodeAddress) -> WidgetNode {
-        let command = Command::new(&address, 0xF00, 9);
-        let response;
-        unsafe {
-            response = Response::new(self.crs.immediate_command(command));
-        }
-        WidgetNode::new(address, response)
+        ResponseParser::get_parameter_subordinate_node_count(response)
     }
 }

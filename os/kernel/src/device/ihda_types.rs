@@ -6,6 +6,8 @@ use num_traits::int::PrimInt;
 use crate::timer;
 use derive_getters::Getters;
 
+const MAX_AMOUNT_OF_CODECS: u8 = 15;
+
 // representation of an IHDA register
 pub struct Register<T> {
     ptr: *mut T,
@@ -176,9 +178,9 @@ impl ControllerRegisterSet {
         }
     }
 
-    pub unsafe fn immediate_command(&self, command: Command) -> u32 {
+    pub unsafe fn immediate_command(&self, command: u32) -> u32 {
         self.icis.write(0b10);
-        self.icoi.write(command.value());
+        self.icoi.write(command);
         self.icis.write(0b1);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
@@ -200,6 +202,7 @@ pub struct NodeAddress {
 
 impl NodeAddress {
     pub fn new(codec_address: u8, node_id: u8) -> Self {
+        if codec_address >= MAX_AMOUNT_OF_CODECS { panic!("IHDA only supports up to {} codecs!", MAX_AMOUNT_OF_CODECS) };
         NodeAddress {
             codec_address,
             node_id,
@@ -208,49 +211,134 @@ impl NodeAddress {
 }
 
 #[derive(Getters)]
-pub struct Command {
+pub struct Codec {
     codec_address: u8,
-    node_id: u8,
-    verb: u16,
-    parameter: u8,
+    root_node: RootNode,
 }
 
-impl Command {
-    pub fn new(address: &NodeAddress, verb: u16, parameter: u8,) -> Self {
-        if verb & 0xF000 != 0 {
-            panic!("Verb identifier can only be 12 bits long! See specification, section 7.3 Codec Parameters and Controls")
+impl Codec {
+    pub fn new(codec_address: u8, root_node: RootNode) -> Self {
+        Codec {
+            codec_address,
+            root_node,
         }
-        Command {
-            codec_address: address.codec_address,
-            node_id: address.node_id,
-            verb,
-            parameter,
-        }
-    }
-
-    pub fn get_parameter(address: &NodeAddress, parameter: Parameter) -> Self {
-        Command::new(address, 0xF00, parameter.id())
-    }
-
-    pub fn value(&self) -> u32 {
-        (self.codec_address as u32) << 28 | (self.node_id as u32) << 20 | (self.verb as u32) << 8 | self.parameter as u32
     }
 }
 
-
-pub struct Response {
-    value: u32,
+pub trait Node {
+    fn address(&self) -> &NodeAddress;
 }
 
-impl Response {
-    pub fn new(value: u32) -> Self {
-        Response {
-            value,
+#[derive(Getters)]
+pub struct RootNode {
+    address: NodeAddress,
+    vendor_id: VendorIdInfo,
+    revision_id: RevisionIdInfo,
+    subordinate_node_count: SubordinateNodeCountInfo,
+    function_group_nodes: Vec<FunctionGroupNode>,
+}
+
+impl Node for RootNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
+}
+
+impl RootNode {
+    pub fn new(
+        codec_address: u8,
+        vendor_id: VendorIdInfo,
+        revision_id: RevisionIdInfo,
+        subordinate_node_count: SubordinateNodeCountInfo,
+        function_group_nodes: Vec<FunctionGroupNode>
+    ) -> Self {
+        RootNode {
+            address: NodeAddress::new(codec_address, 0),
+            vendor_id,
+            revision_id,
+            subordinate_node_count,
+            function_group_nodes,
+        }
+    }
+}
+
+#[derive(Getters)]
+pub struct FunctionGroupNode {
+    address: NodeAddress,
+    subordinate_node_count: SubordinateNodeCountInfo,
+    function_group_type: FunctionGroupTypeInfo,
+    widgets: Vec<WidgetNode>,
+}
+
+impl Node for FunctionGroupNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
+}
+
+impl FunctionGroupNode {
+    pub fn new(
+        address: NodeAddress,
+        subordinate_node_count: SubordinateNodeCountInfo,
+        function_group_type: FunctionGroupTypeInfo,
+        widgets: Vec<WidgetNode>
+    ) -> Self {
+        FunctionGroupNode {
+            address,
+            subordinate_node_count,
+            function_group_type,
+            widgets
+        }
+    }
+}
+
+#[derive(Getters)]
+pub struct WidgetNode {
+    address: NodeAddress,
+    audio_widget_capabilities: AudioWidgetCapabilitiesInfo,
+}
+
+impl Node for WidgetNode {
+    fn address(&self) -> &NodeAddress {
+        &self.address
+    }
+}
+
+impl WidgetNode {
+    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesInfo) -> Self {
+        WidgetNode {
+            address,
+            audio_widget_capabilities,
         }
     }
 
-    pub fn value(&self) -> u32 {
-        self.value
+    pub fn max_number_of_channels(&self) -> u8 {
+        // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
+        (self.audio_widget_capabilities.chan_count_ext << 1) + (self.audio_widget_capabilities.chan_count_lsb as u8) + 1
+    }
+}
+
+pub struct CommandBuilder;
+
+impl CommandBuilder {
+    pub fn get_parameter(node_address: &NodeAddress, parameter: Parameter) -> u32 {
+        Self::command_with_12bit_identifier_verb(node_address, 0xF00, parameter.id())
+    }
+
+    // two example commands (temporarily unused)
+    pub fn get_connection_select(node_address: &NodeAddress) -> u32 {
+        Self::command_with_12bit_identifier_verb(node_address, 0xF01, 0x0)
+    }
+
+    pub fn set_connection_select(node_address: &NodeAddress, connection_index_value: u8) -> u32 {
+        Self::command_with_12bit_identifier_verb(node_address, 0x701, connection_index_value)
+    }
+
+    fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
+        (node_address.codec_address as u32) << 28
+            | (node_address.node_id as u32) << 20
+            | (verb_id as u32) << 8
+            | payload as u32
     }
 }
 
@@ -297,211 +385,164 @@ impl Parameter {
     }
 }
 
-// compare to table 141 in section 7.3.6 of the specification
-pub enum Verb {
-    GetParameter,
-    ConnectionSelect,
-    GetConnectionListEntry,
-    ProcessingState,
-    CoefficientIndex,
-    ProcessingCoefficient,
-    AmplifierGainMute,
-    StreamFormat,
-    DigitalConverter1,
-    DigitalConverter2,
-    DigitalConverter3,
-    DigitalConverter4,
-    PowerState,
-    ChannelStreamID,
-    SDISelect,
-    PinWidgetControl,
-    UnsolicitedEnable,
-    PinSense,
-    EAPDBTLEnable,
-    AllGPIControls,
-    BeepGenerationControl,
-    VolumeKnobControl,
-    ImplementationIDByte0,
-    ImplementationIDByte1,
-    ImplementationIDByte2,
-    ImplementationIDByte3,
-    ConfigDefaultByte0,
-    ConfigDefaultByte1,
-    ConfigDefaultByte2,
-    ConfigDefaultByte3,
-    StripeControl,
-    ConverterChannelCount,
-    DIPSize,
-    ELDData,
-    DIPIndex,
-    DIPData,
-    DIPXmitCtrl,
-    ContentProtectionControl,
-    ASPChannelMapping,
-    Reset,
-}
+pub struct ResponseParser;
 
-impl Verb {
-    pub fn get_code(&self) -> Option<u16> {
-        match self {
-            Verb::GetParameter => Some(0xF00),
-            Verb::ConnectionSelect => Some(0xF01),
-            Verb::GetConnectionListEntry => Some(0xF02),
-            Verb::ProcessingState => Some(0xF03),
-            Verb::CoefficientIndex => Some(0xD),
-            Verb::ProcessingCoefficient => Some(0xC),
-            Verb::AmplifierGainMute => Some(0xB),
-            Verb::StreamFormat => Some(0xA),
-            Verb::DigitalConverter1 => Some(0xF0D),
-            Verb::DigitalConverter2 => Some(0xF0D),
-            Verb::DigitalConverter3 => Some(0xF0D),
-            Verb::DigitalConverter4 => Some(0xF0D),
-            Verb::PowerState => Some(0xF05),
-            Verb::ChannelStreamID => Some(0xF06),
-            Verb::SDISelect => Some(0xF04),
-            Verb::PinWidgetControl => Some(0xF07),
-            Verb::UnsolicitedEnable => Some(0xF08),
-            Verb::PinSense => Some(0xF09),
-            Verb::EAPDBTLEnable => Some(0xF0C),
-            // table 141 in section 7.3.6 of the specification claims that the get code for AllGPIControls is "F10 thru F1A", I just picked the first one...
-            Verb::AllGPIControls => Some(0xF10),
-            Verb::BeepGenerationControl => Some(0xF0A),
-            Verb::VolumeKnobControl => Some(0xF0F),
-            Verb::ImplementationIDByte0 => Some(0xF20),
-            Verb::ImplementationIDByte1 => Some(0xF20),
-            Verb::ImplementationIDByte2 => Some(0xF20),
-            Verb::ImplementationIDByte3 => Some(0xF20),
-            Verb::ConfigDefaultByte0 => Some(0xF1C),
-            Verb::ConfigDefaultByte1 => Some(0xF1C),
-            Verb::ConfigDefaultByte2 => Some(0xF1C),
-            Verb::ConfigDefaultByte3 => Some(0xF1C),
-            Verb::StripeControl => Some(0xF24),
-            Verb::ConverterChannelCount => Some(0xF2D),
-            Verb::DIPSize => Some(0xF2E),
-            Verb::ELDData => Some(0xF2F),
-            Verb::DIPIndex => Some(0xF30),
-            Verb::DIPData => Some(0xF31),
-            Verb::DIPXmitCtrl => Some(0xF32),
-            Verb::ContentProtectionControl => Some(0xF33),
-            Verb::ASPChannelMapping => Some(0xF34),
-            Verb::Reset => None,
-        }
+impl ResponseParser {
+    pub fn get_parameter_vendor_id(response: u32) -> VendorIdInfo {
+        VendorIdInfo::new(response)
     }
 
-    pub fn set_code(&self) -> Option<u16> {
-        match self {
-            Verb::GetParameter => None,
-            Verb::ConnectionSelect => Some(0x701),
-            Verb::GetConnectionListEntry => None,
-            // table 141 in section 7.3.6 of the specification claims that the set code for ProcessingState is "##" (???), section 7.3.3.4 claims that it is "703h"...
-            Verb::ProcessingState => Some(0x703),
-            Verb::CoefficientIndex => Some(0x5),
-            Verb::ProcessingCoefficient => Some(0x4),
-            Verb::AmplifierGainMute => Some(0x3),
-            Verb::StreamFormat => Some(0x2),
-            Verb::DigitalConverter1 => Some(0x70D),
-            Verb::DigitalConverter2 => Some(0x70E),
-            Verb::DigitalConverter3 => Some(0x73E),
-            Verb::DigitalConverter4 => Some(0xF3F),
-            Verb::PowerState => Some(0x705),
-            Verb::ChannelStreamID => Some(0x706),
-            Verb::SDISelect => Some(0x704),
-            Verb::PinWidgetControl => Some(0x707),
-            Verb::UnsolicitedEnable => Some(0x708),
-            Verb::PinSense => Some(0x709),
-            Verb::EAPDBTLEnable => Some(0x70C),
-            // table 141 in section 7.3.6 in the specification claims that the set code for AllGPIControls is "710 thru 71A", I just picked the first one...
-            Verb::AllGPIControls => Some(0x710),
-            Verb::BeepGenerationControl => Some(0x70A),
-            Verb::VolumeKnobControl => Some(0x70F),
-            Verb::ImplementationIDByte0 => Some(0x720),
-            Verb::ImplementationIDByte1 => Some(0x721),
-            Verb::ImplementationIDByte2 => Some(0x722),
-            Verb::ImplementationIDByte3 => Some(0x723),
-            Verb::ConfigDefaultByte0 => Some(0x71C),
-            Verb::ConfigDefaultByte1 => Some(0x71D),
-            Verb::ConfigDefaultByte2 => Some(0x71E),
-            Verb::ConfigDefaultByte3 => Some(0x71F),
-            Verb::StripeControl => Some(0x724),
-            Verb::ConverterChannelCount => Some(0x72D),
-            Verb::DIPSize => None,
-            Verb::ELDData => None,
-            Verb::DIPIndex => Some(0x730),
-            Verb::DIPData => Some(0x731),
-            Verb::DIPXmitCtrl => Some(0x732),
-            Verb::ContentProtectionControl => Some(0x733),
-            Verb::ASPChannelMapping => Some(0x734),
-            Verb::Reset => Some(0x7FF),
+    pub fn get_parameter_revision_id(response: u32) -> RevisionIdInfo {
+        RevisionIdInfo::new(response)
+    }
+
+    pub fn get_parameter_subordinate_node_count(response: u32) -> SubordinateNodeCountInfo {
+        SubordinateNodeCountInfo::new(response)
+    }
+
+    pub fn get_parameter_function_group_type(response: u32) -> FunctionGroupTypeInfo {
+        FunctionGroupTypeInfo::new(response)
+    }
+
+    pub fn get_parameter_audio_widget_capabilities(response: u32) -> AudioWidgetCapabilitiesInfo {
+        AudioWidgetCapabilitiesInfo::new(response)
+    }
+}
+
+#[derive(Getters)]
+pub struct VendorIdInfo {
+    device_id: u16,
+    vendor_id: u16,
+}
+
+impl VendorIdInfo {
+    fn new(response: u32) -> Self {
+        VendorIdInfo {
+            device_id: response.bitand(0xFFFF) as u16,
+            vendor_id: (response >> 16) as u16,
+        }
+
+    }
+}
+
+#[derive(Getters)]
+pub struct RevisionIdInfo {
+    stepping_id: u8,
+    revision_id: u8,
+    minor_revision: u8,
+    major_revision: u8,
+}
+
+impl RevisionIdInfo {
+    fn new(response: u32) -> Self {
+        RevisionIdInfo {
+            stepping_id: response.bitand(0xFF) as u8,
+            revision_id: (response >> 8).bitand(0xFF) as u8,
+            minor_revision: (response >> 16).bitand(0xF) as u8,
+            major_revision: (response >> 20) as u8,
         }
     }
 }
 
 #[derive(Getters)]
-pub struct Codec {
-    codec_address: u8,
-    root_node: RootNode,
-    function_group_nodes: Vec<FunctionGroupNode>,
+pub struct SubordinateNodeCountInfo {
+    total_number_of_nodes: u8,
+    starting_node_number: u8,
 }
 
-impl Codec {
-    pub fn new(codec_address: u8, root_node: RootNode, function_group_nodes: Vec<FunctionGroupNode>) -> Self {
-        Codec {
-            codec_address,
-            root_node,
-            function_group_nodes,
+impl SubordinateNodeCountInfo {
+    fn new(response: u32) -> Self {
+        SubordinateNodeCountInfo {
+            total_number_of_nodes: response.bitand(0xFF) as u8,
+            starting_node_number: (response >> 16) as u8,
         }
-    }
-}
 
-pub trait Node {
-    fn address(&self) -> &NodeAddress;
-}
-
-#[derive(Getters)]
-pub struct RootNode {
-    address: NodeAddress,
-}
-
-impl Node for RootNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl RootNode {
-    pub fn new(codec_address: u8) -> Self {
-        RootNode {
-            address: NodeAddress::new(codec_address, 0),
-        }
-    }
-
-    pub fn get_parameter(&self, parameter: Parameter) -> Command {
-        Command::get_parameter(self.address(), parameter)
     }
 }
 
 #[derive(Getters)]
-pub struct FunctionGroupNode {
-    address: NodeAddress,
-    widgets: Vec<WidgetNode>,
+pub struct FunctionGroupTypeInfo {
+    node_type: FunctionGroupNodeType,
+    unsolicited_response_capable: bool,
 }
 
-impl Node for FunctionGroupNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
+impl FunctionGroupTypeInfo {
+    fn new(response: u32) -> Self {
+        FunctionGroupTypeInfo {
+            node_type: match response.bitand(0xFF) as u8 {
+                0x1 => FunctionGroupNodeType::AudioFunctionGroup,
+                0x2 => FunctionGroupNodeType::VendorDefinedFunctionGroup,
+                0x80..=0xFF => FunctionGroupNodeType::VendorDefinedModemFunctionGroup,
+                _ => panic!("Unknown function group node type!")
+            },
+            unsolicited_response_capable: (response >> 8) != 0,
+        }
+
     }
 }
 
-impl FunctionGroupNode {
-    pub fn new(address: NodeAddress, widgets: Vec<WidgetNode>) -> Self {
-        FunctionGroupNode {
-            address,
-            widgets
+pub enum FunctionGroupNodeType {
+    AudioFunctionGroup,
+    VendorDefinedModemFunctionGroup,
+    VendorDefinedFunctionGroup,
+}
+
+#[derive(Debug, Getters)]
+pub struct AudioWidgetCapabilitiesInfo {
+    chan_count_lsb: bool,
+    in_amp_present: bool,
+    out_amp_present: bool,
+    amp_param_override: bool,
+    format_override: bool,
+    stripe: bool,
+    proc_widget: bool,
+    unsol_capable: bool,
+    conn_list: bool,
+    digital: bool,
+    power_cntrl: bool,
+    lr_swap: bool,
+    cp_caps: bool,
+    chan_count_ext: u8,
+    delay: u8,
+    widget_type: WidgetType,
+}
+
+impl AudioWidgetCapabilitiesInfo {
+    fn new(response: u32) -> Self {
+        AudioWidgetCapabilitiesInfo {
+            chan_count_lsb: get_bit(response, 0),
+            in_amp_present: get_bit(response, 1),
+            out_amp_present: get_bit(response, 2),
+            amp_param_override: get_bit(response, 3),
+            format_override: get_bit(response, 4),
+            stripe: get_bit(response, 5),
+            proc_widget: get_bit(response, 6),
+            unsol_capable: get_bit(response, 7),
+            conn_list: get_bit(response, 8),
+            digital: get_bit(response, 9),
+            power_cntrl: get_bit(response, 10),
+            lr_swap: get_bit(response, 11),
+            cp_caps: get_bit(response, 12),
+            chan_count_ext: (response >> 13).bitand(0b111) as u8,
+            delay: (response >> 16).bitand(0xF) as u8,
+            widget_type: match (response >> 20).bitand(0xF) as u8 {
+                0x0 => WidgetType::AudioOutput,
+                0x1 => WidgetType::AudioInput,
+                0x2 => WidgetType::AudioMixer,
+                0x3 => WidgetType::AudioSelector,
+                0x4 => WidgetType::PinComplex,
+                0x5 => WidgetType::PowerWidget,
+                0x6 => WidgetType::VolumeKnobWidget,
+                0x7 => WidgetType::BeepGeneratorWidget,
+                0xF => WidgetType::VendorDefinedAudioWidget,
+                _ => panic!("Unsupported widget type!")
+            }
         }
     }
 }
 
-enum WidgetType {
+#[derive(Debug)]
+pub enum WidgetType {
     AudioOutput,
     AudioInput,
     AudioMixer,
@@ -513,75 +554,8 @@ enum WidgetType {
     VendorDefinedAudioWidget,
 }
 
-pub struct WidgetNode {
-    address: NodeAddress,
-    widget_type: WidgetType,
-    delay: u8,
-    chan_count_ext: u8,
-    cp_caps: bool,
-    lr_swap: bool,
-    power_cntrl: bool,
-    digital: bool,
-    conn_list: bool,
-    unsol_capable: bool,
-    proc_widget: bool,
-    stripe: bool,
-    format_override: bool,
-    amp_param_override: bool,
-    out_amp_present: bool,
-    in_amp_present: bool,
-    chan_count_lsb: bool,
-}
-
-impl Node for WidgetNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl WidgetNode {
-    pub fn new(address: NodeAddress, response: Response) -> Self {
-        let value = response.value();
-        let widget_type = match (value >> 20).bitand(0xF) as u8 {
-            0x0 => WidgetType::AudioOutput,
-            0x1 => WidgetType::AudioInput,
-            0x2 => WidgetType::AudioMixer,
-            0x3 => WidgetType::AudioSelector,
-            0x4 => WidgetType::PinComplex,
-            0x5 => WidgetType::PowerWidget,
-            0x6 => WidgetType::VolumeKnobWidget,
-            0x7 => WidgetType::BeepGeneratorWidget,
-            0xF => WidgetType::VendorDefinedAudioWidget,
-            _ => panic!("Unsupported widget type!")
-        };
-
-        WidgetNode {
-            address,
-            widget_type,
-            delay: (value >> 16).bitand(0xF) as u8,
-            chan_count_ext: (value >> 13).bitand(0xFF) as u8,
-            cp_caps: (value >> 12).bitand(0x1) != 0,
-            lr_swap: (value >> 11).bitand(0x1) != 0,
-            power_cntrl: (value >> 10).bitand(0x1) != 0,
-            digital: (value >> 9).bitand(0x1) != 0,
-            conn_list: (value >> 8).bitand(0x1) != 0,
-            unsol_capable: (value >> 7).bitand(0x1) != 0,
-            proc_widget: (value >> 6).bitand(0x1) != 0,
-            stripe: (value >> 5).bitand(0x1) != 0,
-            format_override: (value >> 4).bitand(0x1) != 0,
-            amp_param_override: (value >> 3).bitand(0x1) != 0,
-            out_amp_present: (value >> 2).bitand(0x1) != 0,
-            in_amp_present: (value >> 1).bitand(0x1) != 0,
-            chan_count_lsb: value.bitand(0x1) != 0,
-        }
-    }
-
-    pub fn max_number_of_channels(&self) -> u8 {
-        // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
-        (self.chan_count_ext << 1) + (self.chan_count_lsb as u8) + 1
-    }
-}
-
-fn subordinate_node_count<T: Node>(node: &T) -> Command {
-    Command::get_parameter(node.address(), Parameter::SubordinateNodeCount)
+fn get_bit<T: LowerHex + PrimInt>(input: T, index: usize) -> bool {
+    let zero = T::from(0x0).expect("As only u8, u16 and u32 are used as types for T, this should never fail");
+    let one = T::from(0x1).expect("As only u8, u16 and u32 are used as types for T, this should never fail");
+    (input >> index).bitand(one) != zero
 }
