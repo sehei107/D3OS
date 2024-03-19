@@ -8,7 +8,6 @@ use derive_getters::Getters;
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 
 // representation of an IHDA register
-#[derive(Getters)]
 pub struct Register<T: LowerHex + PrimInt> {
     ptr: *mut T,
     name: &'static str,
