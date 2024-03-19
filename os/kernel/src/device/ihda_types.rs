@@ -282,6 +282,7 @@ impl FunctionGroupNode {
 pub struct WidgetNode {
     address: NodeAddress,
     audio_widget_capabilities: AudioWidgetCapabilitiesInfo,
+    widget_info: WidgetInfo,
 }
 
 impl Node for WidgetNode {
@@ -291,10 +292,11 @@ impl Node for WidgetNode {
 }
 
 impl WidgetNode {
-    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesInfo) -> Self {
+    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesInfo, widget_info: WidgetInfo) -> Self {
         WidgetNode {
             address,
             audio_widget_capabilities,
+            widget_info
         }
     }
 
@@ -302,6 +304,19 @@ impl WidgetNode {
         // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
         (self.audio_widget_capabilities.chan_count_ext << 1) + (self.audio_widget_capabilities.chan_count_lsb as u8) + 1
     }
+}
+
+#[derive(Debug)]
+pub enum WidgetInfo {
+    AudioOutputConverter(Option<SampleSizeRateCAPsInfo>, Option<StreamFormatsInfo>),
+    AudioInputConverter(Option<SampleSizeRateCAPsInfo>, Option<StreamFormatsInfo>),
+    PinComplexWidgetNonDigitalDisplay,
+    PinComplexWidgetDigitalDisplay,
+    Mixer,
+    Selector,
+    Power,
+    VolumeKnob,
+    BeepGenerator,
 }
 
 pub struct CommandBuilder;

@@ -11,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetNode};
+use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetInfo, WidgetNode, WidgetType};
 use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -57,16 +57,35 @@ impl IHDA {
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&crs);
 
-        debug!("Sample Size Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
-        debug!("Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
+        debug!("AFG Sample Size Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
+        debug!("AFG Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
 
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
+            match widget.audio_widget_capabilities().widget_type() {
+                WidgetType::AudioOutput => {
+                    match widget.widget_info() {
+                        WidgetInfo::AudioOutputConverter(ssrc_info, sf_info) => {
+                            debug!("Widget Sample Size Rate CAPs: {:?}", ssrc_info);
+                            debug!("Widget Stream Formats: {:?}", sf_info);
+                        }
+                        _ => panic!("Audio output converter widget has no valid widget info!")
+                    }
+                }
+                WidgetType::AudioInput => {}
+                WidgetType::AudioMixer => {}
+                WidgetType::AudioSelector => {}
+                WidgetType::PinComplex => {}
+                WidgetType::PowerWidget => {}
+                WidgetType::VolumeKnobWidget => {}
+                WidgetType::BeepGeneratorWidget => {}
+                WidgetType::VendorDefinedAudioWidget => {}
+            }
             debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
         }
 
-        // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
-        Timer::wait(120000);
+        // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
+        Timer::wait(600000);
 
         IHDA {}
     }
@@ -300,15 +319,42 @@ impl IHDA {
     ) -> Vec<WidgetNode> {
         let mut widgets: Vec<WidgetNode> = Vec::new();
         let codec_address = *fg_addr.codec_address();
+        let mut command;
         let mut response;
 
         for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let widget_address = NodeAddress::new(codec_address, node_id);
+            let widget_info: WidgetInfo;
 
-            let audio_widget_capabilites = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
-            response = RegisterInterface::immediate_command(&crs, audio_widget_capabilites);
+            command = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
+            response = RegisterInterface::immediate_command(&crs, command);
             let audio_widget_capabilities_info = ResponseParser::get_parameter_audio_widget_capabilities(response);
-            widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info));
+
+            match audio_widget_capabilities_info.widget_type() {
+                WidgetType::AudioOutput => {
+                    command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let ssrc_info = ResponseParser::get_parameter_sample_size_rate_caps(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let sf_info = ResponseParser::get_parameter_stream_formats(response);
+
+                    widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info);
+                }
+                // WidgetType::AudioInput => {}
+                // WidgetType::AudioMixer => {}
+                // WidgetType::AudioSelector => {}
+                // WidgetType::PinComplex => {}
+                // WidgetType::PowerWidget => {}
+                // WidgetType::VolumeKnobWidget => {}
+                // WidgetType::BeepGeneratorWidget => {}
+                // WidgetType::VendorDefinedAudioWidget => {}
+                _ => widget_info = WidgetInfo::Selector
+            }
+
+
+            widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
         }
         widgets
     }
