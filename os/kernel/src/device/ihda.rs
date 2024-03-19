@@ -2,10 +2,8 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::fmt::LowerHex;
 use core::ops::BitOr;
 use log::{debug, info};
-use num_traits::PrimInt;
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::structures::paging::frame::PhysFrameRange;
@@ -13,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, Register, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetNode};
+use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetNode};
 use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -116,8 +114,6 @@ impl IHDA {
             debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
         }
 
-
-
         // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
         Timer::wait(120000);
 
@@ -125,11 +121,11 @@ impl IHDA {
 
     fn reset_controller(&self) {
         // set controller reset bit (CRST)
-        RegisterInterface::set_bit(self.crs.gctl(), 0);
+        self.crs.gctl().set_bit(0);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
         const CRST_TIMEOUT: usize = 100;
-        while !RegisterInterface::assert_bit(self.crs.gctl(), 0) {
+        while !self.crs.gctl().assert_bit(0) {
             if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
                 panic!("IHDA controller reset timed out")
             }
@@ -141,22 +137,22 @@ impl IHDA {
 
     fn setup_ihda_config_space(&self) {
         // set Accept Unsolicited Response Enable (UNSOL) bit
-        RegisterInterface::set_bit(self.crs.gctl(), 8);
+        self.crs.gctl().set_bit(8);
 
         // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
-        RegisterInterface::set_bit(self.crs.intctl(), 30);
-        RegisterInterface::set_bit(self.crs.intctl(), 31);
+        self.crs.intctl().set_bit(30);
+        self.crs.intctl().set_bit(31);
 
         // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
-        RegisterInterface::set_all_bits(self.crs.wakeen());
+        self.crs.wakeen().set_all_bits();
     }
 
     fn setup_corb(&self) {
         // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
-        RegisterInterface::clear_all_bits(self.crs.corbctl());
+        self.crs.corbctl().clear_all_bits();
 
         // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
-        let corbsize = RegisterInterface::read(self.crs.corbsize()) & 0b11;
+        let corbsize = self.crs.corbsize().read() & 0b11;
 
         assert_eq!(corbsize, 0b10);
 
@@ -168,22 +164,22 @@ impl IHDA {
                 let lbase = (start_address & 0xFFFFFFFF) as u32;
                 let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
 
-                RegisterInterface::write(self.crs.corblbase(), lbase);
-                RegisterInterface::write(self.crs.corbubase(), ubase);
+                self.crs.corblbase().write(lbase);
+                self.crs.corbubase().write(ubase);
             }
         }
     }
 
     fn reset_corb(&self) {
         // clear CORBWP
-        RegisterInterface::clear_all_bits(self.crs.corbwp());
+        self.crs.corbwp().clear_all_bits();
 
         //reset CORBRP
-        RegisterInterface::set_bit(self.crs.corbrp(), 15);
+        self.crs.corbrp().set_bit(15);
         let start_timer = timer().read().systime_ms();
         // value for CORBRPRST_TIMEOUT arbitrarily chosen
         const CORBRPRST_TIMEOUT: usize = 10000;
-        while RegisterInterface::read(self.crs.corbrp()) != 0x0 {
+        while self.crs.corbrp().read() != 0x0 {
             if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
                 panic!("CORB read pointer reset timed out")
             }
@@ -198,7 +194,7 @@ impl IHDA {
 
     fn setup_rirb(&self) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
-        RegisterInterface::clear_all_bits(self.crs.rirbctl());
+        self.crs.rirbctl().clear_all_bits();
 
         // setup MMIO space for Response Inbound Ring Buffer – RIRB
         let rirb_frame_range = memory::physical::alloc(1);
@@ -207,27 +203,27 @@ impl IHDA {
                 let start_address = start.start_address().as_u64();
                 let lbase = (start_address & 0xFFFFFFFF) as u32;
                 let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                RegisterInterface::write(self.crs.rirblbase(), lbase);
-                RegisterInterface::write(self.crs.rirbubase(), ubase);
+                self.crs.rirblbase().write(lbase);
+                self.crs.rirbubase().write(ubase);
             }
         }
 
         // reset RIRBWP
-        RegisterInterface::set_bit(self.crs.rirbwp(), 15);
+        self.crs.rirbwp().set_bit(15);
     }
 
 
     fn start_corb(&self) {
         // set CORBRUN and CMEIE bits
-        RegisterInterface::set_bit(self.crs.corbctl(), 0);
-        RegisterInterface::set_bit(self.crs.corbctl(), 1);
+        self.crs.corbctl().set_bit(0);
+        self.crs.corbctl().set_bit(1);
     }
 
     fn start_rirb(&self) {
         // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
-        RegisterInterface::set_bit(self.crs.rirbctl(), 0);
-        RegisterInterface::set_bit(self.crs.rirbctl(), 1);
-        RegisterInterface::set_bit(self.crs.rirbctl(), 2);
+        self.crs.rirbctl().set_bit(0);
+        self.crs.rirbctl().set_bit(1);
+        self.crs.rirbctl().set_bit(2);
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
@@ -235,7 +231,7 @@ impl IHDA {
     fn scan_for_available_codecs(&self) -> Vec<Codec> {
         let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
-            if RegisterInterface::assert_bit(self.crs.wakests(), index) {
+            if self.crs.wakests().assert_bit(index) {
                 let root_node_addr = NodeAddress::new(index, 0x0);
                 let mut response;
 
@@ -320,70 +316,18 @@ impl IHDA {
 struct RegisterInterface;
 
 impl RegisterInterface {
-    fn read<T: LowerHex + PrimInt>(register: &Register<T>) -> T {
-        unsafe {
-            return register.ptr().read();
-        }
-    }
-
-    fn write<T: LowerHex + PrimInt>(register: &Register<T>, value: T) {
-        unsafe {
-            register.ptr().write(value)
-        }
-    }
-
-    fn set_bit<T: LowerHex + PrimInt>(register: &Register<T>, index: u8) {
-        let bitmask: u32 = 0x1 << index;
-        unsafe {
-            register.ptr().write(register.ptr().read() | T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
-        }
-    }
-
-    fn clear_bit<T: LowerHex + PrimInt>(register: &Register<T>, index: u8) {
-        let bitmask: u32 = 0x1 << index;
-        unsafe {
-            register.ptr().write(register.ptr().read() & !T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
-        }
-    }
-
-    fn set_all_bits<T: LowerHex + PrimInt>(register: &Register<T>) {
-        unsafe {
-            register.ptr().write(!T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
-        }
-    }
-
-    fn clear_all_bits<T: LowerHex + PrimInt>(register: &Register<T>) {
-        unsafe {
-            register.ptr().write(T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
-        }
-    }
-
-    fn assert_bit<T: LowerHex + PrimInt>(register: &Register<T>, index: u8) -> bool {
-        let bitmask: u32 = 0x1 << index;
-        unsafe {
-            (register.ptr().read() & T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"))
-                != T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail")
-        }
-    }
-
-    fn dump<T: LowerHex + PrimInt>(register: &Register<T>) {
-        unsafe {
-            debug!("Value read from register {}: {:#x}", register.name(), register.ptr().read());
-        }
-    }
-
     fn immediate_command(crs: &ControllerRegisterSet, command: u32) -> u32 {
-        RegisterInterface::write(crs.icis(), 0b10);
-        RegisterInterface::write(crs.icoi(), command);
-        RegisterInterface::write(crs.icis(), 0b1);
+        crs.icis().write(0b10);
+        crs.icoi().write(command);
+        crs.icis().write(0b1);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
         const ICIS_TIMEOUT: usize = 100;
-        while (RegisterInterface::read(crs.icis()) & 0b10) != 0b10 {
+        while (crs.icis().read() & 0b10) != 0b10 {
             if timer().read().systime_ms() > start_timer + ICIS_TIMEOUT {
                 panic!("IHDA immediate command timed out")
             }
         }
-        RegisterInterface::read(crs.icii())
+        crs.icii().read()
     }
 }
