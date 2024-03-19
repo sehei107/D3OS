@@ -114,7 +114,7 @@ static SERIAL_PORT: Once<SerialPort> = Once::new();
 static TERMINAL: Once<LFBTerminal> = Once::new();
 static PS2: Once<PS2> = Once::new();
 static PCI: Once<PciBus> = Once::new();
-static IHDA: Once<IHDA> = Once::new();
+static IHDA_SOUND_CARD: Once<IHDA> = Once::new();
 
 pub fn init_efi_system_table(table: SystemTable<Runtime>) {
     EFI_SYSTEM_TABLE.call_once(|| EfiSystemTable::new(table));
@@ -189,8 +189,7 @@ pub fn init_pci() {
 }
 
 pub fn init_ihda() {
-    IHDA.call_once(|| IHDA::new());
-    IHDA.get().unwrap().init();
+    IHDA_SOUND_CARD.call_once(|| IHDA::new());
 }
 
 pub fn init_initrd(module: &ModuleTag) {

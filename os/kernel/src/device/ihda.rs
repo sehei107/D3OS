@@ -21,9 +21,7 @@ const PCI_MULTIMEDIA_DEVICE:  BaseClass = 4;
 const PCI_IHDA_DEVICE:  SubClass = 3;
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 
-pub struct IHDA {
-    crs: ControllerRegisterSet,
-}
+pub struct IHDA;
 
 unsafe impl Sync for IHDA {}
 unsafe impl Send for IHDA {}
@@ -39,6 +37,38 @@ impl InterruptHandler for IHDAInterruptHandler {
 
 impl IHDA {
     pub fn new() -> Self {
+        let crs = IHDA::connect_controller();
+
+        info!("Initializing IHDA sound card");
+        IHDA::reset_controller(&crs);
+        info!("IHDA Controller reset complete");
+
+        IHDA::setup_ihda_config_space(&crs);
+        info!("IHDA configuration space set up");
+
+
+        IHDA::setup_corb(&crs);
+        IHDA::setup_rirb(&crs);
+        IHDA::start_corb(&crs);
+        IHDA::start_rirb(&crs);
+
+        info!("CORB and RIRB set up and running");
+
+        // interview sound card
+        let codecs = IHDA::scan_for_available_codecs(&crs);
+
+        debug!("Find all widgets in first audio function group:");
+        for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
+            debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
+        }
+
+        // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
+        Timer::wait(120000);
+
+        IHDA {}
+    }
+
+    fn connect_controller() -> ControllerRegisterSet {
         let pci = pci_bus();
 
         // find ihda devices
@@ -78,54 +108,21 @@ impl IHDA {
                     // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
                     // will now result in a call of IHDAInterruptHandler's "trigger"-function.
 
-                    return Self {
-                        crs,
-                    }
+                    return crs;
                 },
-
                 _ => { panic!("Invalid BAR! IHDA always uses Memory32") },
             }
         }
-
-        panic!("No IHDA device found!")
+        panic!("No IHDA device found!");
     }
 
-    pub fn init(&self) {
-        info!("Initializing IHDA sound card");
-        self.reset_controller();
-        info!("IHDA Controller reset complete");
-
-        self.setup_ihda_config_space();
-        info!("IHDA configuration space set up");
-
-
-        self.setup_corb();
-        self.setup_rirb();
-        self.start_corb();
-        self.start_rirb();
-
-        info!("CORB and RIRB set up and running");
-
-        // interview sound card
-        let codecs = self.scan_for_available_codecs();
-
-        debug!("Find all widgets in first audio function group:");
-        for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
-            debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
-        }
-
-        // wait two minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
-        Timer::wait(120000);
-
-    }
-
-    fn reset_controller(&self) {
+    fn reset_controller(crs: &ControllerRegisterSet) {
         // set controller reset bit (CRST)
-        self.crs.gctl().set_bit(0);
+        crs.gctl().set_bit(0);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
         const CRST_TIMEOUT: usize = 100;
-        while !self.crs.gctl().assert_bit(0) {
+        while !crs.gctl().assert_bit(0) {
             if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
                 panic!("IHDA controller reset timed out")
             }
@@ -135,24 +132,24 @@ impl IHDA {
         Timer::wait(1);
     }
 
-    fn setup_ihda_config_space(&self) {
+    fn setup_ihda_config_space(crs: &ControllerRegisterSet) {
         // set Accept Unsolicited Response Enable (UNSOL) bit
-        self.crs.gctl().set_bit(8);
+        crs.gctl().set_bit(8);
 
         // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
-        self.crs.intctl().set_bit(30);
-        self.crs.intctl().set_bit(31);
+        crs.intctl().set_bit(30);
+        crs.intctl().set_bit(31);
 
         // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
-        self.crs.wakeen().set_all_bits();
+        crs.wakeen().set_all_bits();
     }
 
-    fn setup_corb(&self) {
+    fn setup_corb(crs: &ControllerRegisterSet) {
         // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
-        self.crs.corbctl().clear_all_bits();
+        crs.corbctl().clear_all_bits();
 
         // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
-        let corbsize = self.crs.corbsize().read() & 0b11;
+        let corbsize = crs.corbsize().read() & 0b11;
 
         assert_eq!(corbsize, 0b10);
 
@@ -164,22 +161,22 @@ impl IHDA {
                 let lbase = (start_address & 0xFFFFFFFF) as u32;
                 let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
 
-                self.crs.corblbase().write(lbase);
-                self.crs.corbubase().write(ubase);
+                crs.corblbase().write(lbase);
+                crs.corbubase().write(ubase);
             }
         }
     }
 
-    fn reset_corb(&self) {
+    fn reset_corb(crs: &ControllerRegisterSet) {
         // clear CORBWP
-        self.crs.corbwp().clear_all_bits();
+        crs.corbwp().clear_all_bits();
 
         //reset CORBRP
-        self.crs.corbrp().set_bit(15);
+        crs.corbrp().set_bit(15);
         let start_timer = timer().read().systime_ms();
         // value for CORBRPRST_TIMEOUT arbitrarily chosen
         const CORBRPRST_TIMEOUT: usize = 10000;
-        while self.crs.corbrp().read() != 0x0 {
+        while crs.corbrp().read() != 0x0 {
             if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
                 panic!("CORB read pointer reset timed out")
             }
@@ -192,9 +189,9 @@ impl IHDA {
         // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
     }
 
-    fn setup_rirb(&self) {
+    fn setup_rirb(crs: &ControllerRegisterSet) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
-        self.crs.rirbctl().clear_all_bits();
+        crs.rirbctl().clear_all_bits();
 
         // setup MMIO space for Response Inbound Ring Buffer – RIRB
         let rirb_frame_range = memory::physical::alloc(1);
@@ -203,51 +200,51 @@ impl IHDA {
                 let start_address = start.start_address().as_u64();
                 let lbase = (start_address & 0xFFFFFFFF) as u32;
                 let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                self.crs.rirblbase().write(lbase);
-                self.crs.rirbubase().write(ubase);
+                crs.rirblbase().write(lbase);
+                crs.rirbubase().write(ubase);
             }
         }
 
         // reset RIRBWP
-        self.crs.rirbwp().set_bit(15);
+        crs.rirbwp().set_bit(15);
     }
 
 
-    fn start_corb(&self) {
+    fn start_corb(crs: &ControllerRegisterSet) {
         // set CORBRUN and CMEIE bits
-        self.crs.corbctl().set_bit(0);
-        self.crs.corbctl().set_bit(1);
+        crs.corbctl().set_bit(0);
+        crs.corbctl().set_bit(1);
     }
 
-    fn start_rirb(&self) {
+    fn start_rirb(crs: &ControllerRegisterSet) {
         // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
-        self.crs.rirbctl().set_bit(0);
-        self.crs.rirbctl().set_bit(1);
-        self.crs.rirbctl().set_bit(2);
+        crs.rirbctl().set_bit(0);
+        crs.rirbctl().set_bit(1);
+        crs.rirbctl().set_bit(2);
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
     // then find all function group nodes and widgets associated with a codec
-    fn scan_for_available_codecs(&self) -> Vec<Codec> {
+    fn scan_for_available_codecs(crs: &ControllerRegisterSet) -> Vec<Codec> {
         let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
-            if self.crs.wakests().assert_bit(index) {
+            if crs.wakests().assert_bit(index) {
                 let root_node_addr = NodeAddress::new(index, 0x0);
                 let mut response;
 
                 let vendor_id = CommandBuilder::get_parameter(&root_node_addr, VendorId);
-                response = RegisterInterface::immediate_command(&self.crs, vendor_id);
+                response = RegisterInterface::immediate_command(&crs, vendor_id);
                 let vendor_id_info = ResponseParser::get_parameter_vendor_id(response);
 
                 let revision_id = CommandBuilder::get_parameter(&root_node_addr, RevisionId);
-                response = RegisterInterface::immediate_command(&self.crs, revision_id);
+                response = RegisterInterface::immediate_command(&crs, revision_id);
                 let revision_id_info = ResponseParser::get_parameter_revision_id(response);
 
                 let subordinate_node_count = CommandBuilder::get_parameter(&root_node_addr, SubordinateNodeCount);
-                response = RegisterInterface::immediate_command(&self.crs, subordinate_node_count);
+                response = RegisterInterface::immediate_command(&crs, subordinate_node_count);
                 let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
 
-                let function_group_nodes = self.scan_codec_for_available_function_groups(&root_node_addr, &subordinate_node_count_info);
+                let function_group_nodes = IHDA::scan_codec_for_available_function_groups(crs, &root_node_addr, &subordinate_node_count_info);
 
                 let root_node = RootNode::new(index, vendor_id_info, revision_id_info, subordinate_node_count_info, function_group_nodes);
                 codecs.push(Codec::new(index, root_node));
@@ -257,7 +254,7 @@ impl IHDA {
     }
 
     fn scan_codec_for_available_function_groups(
-        &self,
+        crs: &ControllerRegisterSet,
         root_node_addr: &NodeAddress,
         snci: &SubordinateNodeCountInfo
     ) -> Vec<FunctionGroupNode> {
@@ -269,14 +266,14 @@ impl IHDA {
             let fg_address = NodeAddress::new(codec_address, node_id);
 
             let subordinate_node_count = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
-            response = RegisterInterface::immediate_command(&self.crs, subordinate_node_count);
+            response = RegisterInterface::immediate_command(&crs, subordinate_node_count);
             let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
 
             let function_group_type = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
-            response = RegisterInterface::immediate_command(&self.crs, function_group_type);
+            response = RegisterInterface::immediate_command(&crs, function_group_type);
             let function_group_type_info = ResponseParser::get_parameter_function_group_type(response);
 
-            let widgets = self.scan_function_group_for_available_widgets(&fg_address, &subordinate_node_count_info);
+            let widgets = IHDA::scan_function_group_for_available_widgets(crs, &fg_address, &subordinate_node_count_info);
 
             fg_nodes.push(FunctionGroupNode::new(fg_address, subordinate_node_count_info, function_group_type_info, widgets));
         }
@@ -284,7 +281,7 @@ impl IHDA {
     }
 
     fn scan_function_group_for_available_widgets(
-        &self,
+        crs: &ControllerRegisterSet,
         fg_addr: &NodeAddress,
         snci: &SubordinateNodeCountInfo
     ) -> Vec<WidgetNode> {
@@ -296,7 +293,7 @@ impl IHDA {
             let widget_address = NodeAddress::new(codec_address, node_id);
 
             let audio_widget_capabilites = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
-            response = RegisterInterface::immediate_command(&self.crs, audio_widget_capabilites);
+            response = RegisterInterface::immediate_command(&crs, audio_widget_capabilites);
             let audio_widget_capabilities_info = ResponseParser::get_parameter_audio_widget_capabilities(response);
             widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info));
         }
@@ -305,10 +302,10 @@ impl IHDA {
 
     // IHDA Commands
 
-    fn subordinate_node_count(&self, node_address: &NodeAddress) -> SubordinateNodeCountInfo {
+    fn subordinate_node_count(crs: &ControllerRegisterSet, node_address: &NodeAddress) -> SubordinateNodeCountInfo {
         let command = CommandBuilder::get_parameter(node_address, SubordinateNodeCount);
         let response;
-        response = RegisterInterface::immediate_command(&self.crs, command);
+        response = RegisterInterface::immediate_command(&crs, command);
         ResponseParser::get_parameter_subordinate_node_count(response)
     }
 }
