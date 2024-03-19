@@ -12,7 +12,7 @@ use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
 use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetNode};
-use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SubordinateNodeCount, VendorId};
+use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -56,6 +56,9 @@ impl IHDA {
 
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&crs);
+
+        debug!("Sample Size Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
+        debug!("Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
 
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
@@ -260,22 +263,32 @@ impl IHDA {
     ) -> Vec<FunctionGroupNode> {
         let mut fg_nodes: Vec<FunctionGroupNode> = Vec::new();
         let codec_address = *root_node_addr.codec_address();
+        let mut command;
         let mut response;
 
         for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let fg_address = NodeAddress::new(codec_address, node_id);
 
-            let subordinate_node_count = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
-            response = RegisterInterface::immediate_command(&crs, subordinate_node_count);
+
+            command = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
+            response = RegisterInterface::immediate_command(&crs, command);
             let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
 
-            let function_group_type = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
-            response = RegisterInterface::immediate_command(&crs, function_group_type);
+            command = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
+            response = RegisterInterface::immediate_command(&crs, command);
             let function_group_type_info = ResponseParser::get_parameter_function_group_type(response);
+
+            command = CommandBuilder::get_parameter(&fg_address, SampleSizeRateCAPs);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let sample_size_rate_caps = ResponseParser::get_parameter_sample_size_rate_caps(response);
+
+            command = CommandBuilder::get_parameter(&fg_address, StreamFormats);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let stream_formats = ResponseParser::get_parameter_stream_formats(response);
 
             let widgets = IHDA::scan_function_group_for_available_widgets(crs, &fg_address, &subordinate_node_count_info);
 
-            fg_nodes.push(FunctionGroupNode::new(fg_address, subordinate_node_count_info, function_group_type_info, widgets));
+            fg_nodes.push(FunctionGroupNode::new(fg_address, subordinate_node_count_info, function_group_type_info, sample_size_rate_caps, stream_formats, widgets));
         }
         fg_nodes
     }
@@ -298,15 +311,6 @@ impl IHDA {
             widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info));
         }
         widgets
-    }
-
-    // IHDA Commands
-
-    fn subordinate_node_count(crs: &ControllerRegisterSet, node_address: &NodeAddress) -> SubordinateNodeCountInfo {
-        let command = CommandBuilder::get_parameter(node_address, SubordinateNodeCount);
-        let response;
-        response = RegisterInterface::immediate_command(&crs, command);
-        ResponseParser::get_parameter_subordinate_node_count(response)
     }
 }
 

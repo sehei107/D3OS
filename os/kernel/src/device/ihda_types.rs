@@ -174,7 +174,7 @@ impl ControllerRegisterSet {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct NodeAddress {
     codec_address: u8,
     node_id: u8,
@@ -190,7 +190,7 @@ impl NodeAddress {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct Codec {
     codec_address: u8,
     root_node: RootNode,
@@ -209,7 +209,7 @@ pub trait Node {
     fn address(&self) -> &NodeAddress;
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct RootNode {
     address: NodeAddress,
     vendor_id: VendorIdInfo,
@@ -242,11 +242,13 @@ impl RootNode {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct FunctionGroupNode {
     address: NodeAddress,
     subordinate_node_count: SubordinateNodeCountInfo,
     function_group_type: FunctionGroupTypeInfo,
+    sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
+    stream_formats: Option<StreamFormatsInfo>,
     widgets: Vec<WidgetNode>,
 }
 
@@ -261,18 +263,22 @@ impl FunctionGroupNode {
         address: NodeAddress,
         subordinate_node_count: SubordinateNodeCountInfo,
         function_group_type: FunctionGroupTypeInfo,
+        sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
+        stream_formats: Option<StreamFormatsInfo>,
         widgets: Vec<WidgetNode>
     ) -> Self {
         FunctionGroupNode {
             address,
             subordinate_node_count,
             function_group_type,
+            sample_size_rate_caps,
+            stream_formats,
             widgets
         }
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct WidgetNode {
     address: NodeAddress,
     audio_widget_capabilities: AudioWidgetCapabilitiesInfo,
@@ -387,9 +393,17 @@ impl ResponseParser {
     pub fn get_parameter_audio_widget_capabilities(response: u32) -> AudioWidgetCapabilitiesInfo {
         AudioWidgetCapabilitiesInfo::new(response)
     }
+
+    pub fn get_parameter_sample_size_rate_caps(response: u32) -> Option<SampleSizeRateCAPsInfo> {
+        SampleSizeRateCAPsInfo::new(response)
+    }
+
+    pub fn get_parameter_stream_formats(response: u32) -> Option<StreamFormatsInfo> {
+        StreamFormatsInfo::new(response)
+    }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct VendorIdInfo {
     device_id: u16,
     vendor_id: u16,
@@ -405,7 +419,7 @@ impl VendorIdInfo {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct RevisionIdInfo {
     stepping_id: u8,
     revision_id: u8,
@@ -424,7 +438,7 @@ impl RevisionIdInfo {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct SubordinateNodeCountInfo {
     total_number_of_nodes: u8,
     starting_node_number: u8,
@@ -440,7 +454,7 @@ impl SubordinateNodeCountInfo {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct FunctionGroupTypeInfo {
     node_type: FunctionGroupNodeType,
     unsolicited_response_capable: bool,
@@ -461,6 +475,7 @@ impl FunctionGroupTypeInfo {
     }
 }
 
+#[derive(Debug)]
 pub enum FunctionGroupNodeType {
     AudioFunctionGroup,
     VendorDefinedModemFunctionGroup,
@@ -532,6 +547,74 @@ pub enum WidgetType {
     VolumeKnobWidget,
     BeepGeneratorWidget,
     VendorDefinedAudioWidget,
+}
+
+#[derive(Debug, Getters)]
+pub struct SampleSizeRateCAPsInfo {
+    support_8000hz: bool,
+    support_11025hz: bool,
+    support_16000hz: bool,
+    support_22050hz: bool,
+    support_32000hz: bool,
+    support_44100hz: bool,
+    support_48000hz: bool,
+    support_88200hz: bool,
+    support_96000hz: bool,
+    support_176400hz: bool,
+    support_192000hz: bool,
+    support_384000hz: bool,
+    support_8bit: bool,
+    support_16bit: bool,
+    support_20bit: bool,
+    support_24bit: bool,
+    support_32bit: bool,
+}
+
+impl SampleSizeRateCAPsInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(SampleSizeRateCAPsInfo {
+                support_8000hz: get_bit(response, 0),
+                support_11025hz: get_bit(response, 1),
+                support_16000hz: get_bit(response, 2),
+                support_22050hz: get_bit(response, 3),
+                support_32000hz: get_bit(response, 4),
+                support_44100hz: get_bit(response, 5),
+                support_48000hz: get_bit(response, 6),
+                support_88200hz: get_bit(response, 7),
+                support_96000hz: get_bit(response, 8),
+                support_176400hz: get_bit(response, 9),
+                support_192000hz: get_bit(response, 10),
+                support_384000hz: get_bit(response, 11),
+                support_8bit: get_bit(response, 16),
+                support_16bit: get_bit(response, 17),
+                support_20bit: get_bit(response, 18),
+                support_24bit: get_bit(response, 19),
+                support_32bit: get_bit(response, 20),
+            })
+        };
+        None
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct StreamFormatsInfo {
+    pcm: bool,
+    float32: bool,
+    ac3: bool,
+}
+
+impl StreamFormatsInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(StreamFormatsInfo {
+                pcm: get_bit(response, 0),
+                float32: get_bit(response, 1),
+                ac3: get_bit(response, 2),
+            })
+        };
+        None
+    }
 }
 
 fn get_bit<T: LowerHex + PrimInt>(input: T, index: usize) -> bool {
