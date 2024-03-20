@@ -247,8 +247,14 @@ pub struct FunctionGroupNode {
     address: NodeAddress,
     subordinate_node_count: SubordinateNodeCountInfo,
     function_group_type: FunctionGroupTypeInfo,
+    audio_function_group_caps: Option<AudioFunctionGroupCapabilitiesInfo>,
     sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
     stream_formats: Option<StreamFormatsInfo>,
+    input_amp_caps: AmpCapabilitiesInfo,
+    output_amp_caps: AmpCapabilitiesInfo,
+    // function group node must provide a SupportedPowerStatesInfo, but QEMU doesn't do it... so this only an Option<SupportedPowerStatesInfo> for now
+    supported_power_states: Option<SupportedPowerStatesInfo>,
+    gpio_count: Option<GPIOCountInfo>,
     widgets: Vec<WidgetNode>,
 }
 
@@ -263,16 +269,26 @@ impl FunctionGroupNode {
         address: NodeAddress,
         subordinate_node_count: SubordinateNodeCountInfo,
         function_group_type: FunctionGroupTypeInfo,
+        audio_function_group_caps: Option<AudioFunctionGroupCapabilitiesInfo>,
         sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
         stream_formats: Option<StreamFormatsInfo>,
+        input_amp_caps: AmpCapabilitiesInfo,
+        output_amp_caps: AmpCapabilitiesInfo,
+        supported_power_states: Option<SupportedPowerStatesInfo>,
+        gpio_count: Option<GPIOCountInfo>,
         widgets: Vec<WidgetNode>
     ) -> Self {
         FunctionGroupNode {
             address,
             subordinate_node_count,
             function_group_type,
+            audio_function_group_caps,
             sample_size_rate_caps,
             stream_formats,
+            input_amp_caps,
+            output_amp_caps,
+            supported_power_states,
+            gpio_count,
             widgets
         }
     }
@@ -308,15 +324,36 @@ impl WidgetNode {
 
 #[derive(Debug)]
 pub enum WidgetInfo {
-    AudioOutputConverter(Option<SampleSizeRateCAPsInfo>, Option<StreamFormatsInfo>),
-    AudioInputConverter(Option<SampleSizeRateCAPsInfo>, Option<StreamFormatsInfo>),
-    PinComplexWidgetNonDigitalDisplay,
-    PinComplexWidgetDigitalDisplay,
+    AudioOutputConverter(
+        Option<SampleSizeRateCAPsInfo>,
+        Option<StreamFormatsInfo>,
+        AmpCapabilitiesInfo,
+        Option<SupportedPowerStatesInfo>,
+        Option<ProcessingCapabilitiesInfo>,
+    ),
+    AudioInputConverter(
+        Option<SampleSizeRateCAPsInfo>,
+        Option<StreamFormatsInfo>,
+        AmpCapabilitiesInfo,
+        ConnectionListLengthInfo,
+        Option<SupportedPowerStatesInfo>,
+        Option<ProcessingCapabilitiesInfo>,
+    ),
+    // first AmpCapabilitiesInfo is input amp caps and second AmpCapabilitiesInfo is output amp caps
+    PinComplex(
+        PinCapabilitiesInfo,
+        AmpCapabilitiesInfo,
+        AmpCapabilitiesInfo,
+        ConnectionListLengthInfo,
+        Option<SupportedPowerStatesInfo>,
+        Option<ProcessingCapabilitiesInfo>,
+    ),
     Mixer,
     Selector,
     Power,
     VolumeKnob,
     BeepGenerator,
+    VendorDefined,
 }
 
 pub struct CommandBuilder;
@@ -356,7 +393,7 @@ pub enum Parameter {
     PinCapabilities,
     InputAmpCapabilities,
     OutputAmpCapabilities,
-    ConnectionLengthList,
+    ConnectionListLength,
     SupportedPowerStates,
     ProcessingCapabilities,
     GPIOCount,
@@ -377,7 +414,7 @@ impl Parameter {
             Parameter::PinCapabilities => 0x0C,
             Parameter::InputAmpCapabilities => 0x0D,
             Parameter::OutputAmpCapabilities => 0x12,
-            Parameter::ConnectionLengthList => 0x0E,
+            Parameter::ConnectionListLength => 0x0E,
             Parameter::SupportedPowerStates => 0x0F,
             Parameter::ProcessingCapabilities => 0x10,
             Parameter::GPIOCount => 0x11,
@@ -405,6 +442,10 @@ impl ResponseParser {
         FunctionGroupTypeInfo::new(response)
     }
 
+    pub fn get_parameter_audio_function_group_capabilities(response: u32) -> Option<AudioFunctionGroupCapabilitiesInfo> {
+        AudioFunctionGroupCapabilitiesInfo::new(response)
+    }
+
     pub fn get_parameter_audio_widget_capabilities(response: u32) -> AudioWidgetCapabilitiesInfo {
         AudioWidgetCapabilitiesInfo::new(response)
     }
@@ -415,6 +456,34 @@ impl ResponseParser {
 
     pub fn get_parameter_stream_formats(response: u32) -> Option<StreamFormatsInfo> {
         StreamFormatsInfo::new(response)
+    }
+
+    pub fn get_parameter_pin_capabilities(response: u32) -> PinCapabilitiesInfo {
+        PinCapabilitiesInfo::new(response)
+    }
+
+    pub fn get_parameter_input_amp_capabilities(response: u32) -> AmpCapabilitiesInfo {
+        AmpCapabilitiesInfo::new(response)
+    }
+
+    pub fn get_parameter_output_amp_capabilities(response: u32) -> AmpCapabilitiesInfo {
+        AmpCapabilitiesInfo::new(response)
+    }
+
+    pub fn get_parameter_connection_list_length(response: u32) -> ConnectionListLengthInfo {
+        ConnectionListLengthInfo::new(response)
+    }
+
+    pub fn get_parameter_supported_power_states(response: u32) -> Option<SupportedPowerStatesInfo> {
+        SupportedPowerStatesInfo::new(response)
+    }
+
+    pub fn get_parameter_processing_capabilities(response: u32) -> Option<ProcessingCapabilitiesInfo> {
+        ProcessingCapabilitiesInfo::new(response)
+    }
+
+    pub fn get_parameter_gpio_count(response: u32) -> Option<GPIOCountInfo> {
+        GPIOCountInfo::new(response)
     }
 }
 
@@ -428,7 +497,7 @@ impl VendorIdInfo {
     fn new(response: u32) -> Self {
         VendorIdInfo {
             device_id: response.bitand(0xFFFF) as u16,
-            vendor_id: (response >> 16) as u16,
+            vendor_id: (response >> 16).bitand(0xFFFF) as u16,
         }
 
     }
@@ -448,7 +517,7 @@ impl RevisionIdInfo {
             stepping_id: response.bitand(0xFF) as u8,
             revision_id: (response >> 8).bitand(0xFF) as u8,
             minor_revision: (response >> 16).bitand(0xF) as u8,
-            major_revision: (response >> 20) as u8,
+            major_revision: (response >> 20).bitand(0xF) as u8,
         }
     }
 }
@@ -463,7 +532,7 @@ impl SubordinateNodeCountInfo {
     fn new(response: u32) -> Self {
         SubordinateNodeCountInfo {
             total_number_of_nodes: response.bitand(0xFF) as u8,
-            starting_node_number: (response >> 16) as u8,
+            starting_node_number: (response >> 16).bitand(0xFF) as u8,
         }
 
     }
@@ -471,7 +540,7 @@ impl SubordinateNodeCountInfo {
 
 #[derive(Debug, Getters)]
 pub struct FunctionGroupTypeInfo {
-    node_type: FunctionGroupNodeType,
+    node_type: FunctionGroupType,
     unsolicited_response_capable: bool,
 }
 
@@ -479,22 +548,42 @@ impl FunctionGroupTypeInfo {
     fn new(response: u32) -> Self {
         FunctionGroupTypeInfo {
             node_type: match response.bitand(0xFF) as u8 {
-                0x1 => FunctionGroupNodeType::AudioFunctionGroup,
-                0x2 => FunctionGroupNodeType::VendorDefinedFunctionGroup,
-                0x80..=0xFF => FunctionGroupNodeType::VendorDefinedModemFunctionGroup,
+                0x1 => FunctionGroupType::AudioFunctionGroup,
+                0x2 => FunctionGroupType::VendorDefinedFunctionGroup,
+                0x80..=0xFF => FunctionGroupType::VendorDefinedModemFunctionGroup,
                 _ => panic!("Unknown function group node type!")
             },
-            unsolicited_response_capable: (response >> 8) != 0,
+            unsolicited_response_capable: get_bit(response, 8),
         }
 
     }
 }
 
 #[derive(Debug)]
-pub enum FunctionGroupNodeType {
+pub enum FunctionGroupType {
     AudioFunctionGroup,
     VendorDefinedModemFunctionGroup,
     VendorDefinedFunctionGroup,
+}
+
+#[derive(Debug, Getters)]
+pub struct AudioFunctionGroupCapabilitiesInfo {
+    output_delay: u8,
+    input_delay: u8,
+    beep_gen: bool,
+}
+
+impl AudioFunctionGroupCapabilitiesInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(AudioFunctionGroupCapabilitiesInfo {
+                output_delay: response.bitand(0xF) as u8,
+                input_delay: (response >> 8).bitand(0xF) as u8,
+                beep_gen: get_bit(response, 16),
+            })
+        }
+        None
+    }
 }
 
 #[derive(Debug, Getters)]
@@ -607,7 +696,7 @@ impl SampleSizeRateCAPsInfo {
                 support_24bit: get_bit(response, 19),
                 support_32bit: get_bit(response, 20),
             })
-        };
+        }
         None
     }
 }
@@ -627,7 +716,148 @@ impl StreamFormatsInfo {
                 float32: get_bit(response, 1),
                 ac3: get_bit(response, 2),
             })
-        };
+        }
+        None
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct PinCapabilitiesInfo {
+    impedence_sense_capable: bool,
+    trigger_required: bool,
+    presence_detect_capable: bool,
+    headphone_drive_capable: bool,
+    output_capable: bool,
+    input_capable: bool,
+    balanced_io_pins: bool,
+    hdmi: bool,
+    vref_control: u8,
+    eapd_capable: bool,
+    display_port: bool,
+    high_bit_rate: bool,
+}
+
+impl PinCapabilitiesInfo {
+    fn new(response: u32) -> Self {
+        PinCapabilitiesInfo {
+            impedence_sense_capable: get_bit(response, 0),
+            trigger_required: get_bit(response, 1),
+            presence_detect_capable: get_bit(response, 2),
+            headphone_drive_capable: get_bit(response, 3),
+            output_capable: get_bit(response, 4),
+            input_capable: get_bit(response, 5),
+            balanced_io_pins: get_bit(response, 6),
+            hdmi: get_bit(response, 7),
+            vref_control: (response >> 8).bitand(0xFF) as u8,
+            eapd_capable: get_bit(response, 16),
+            display_port: get_bit(response, 24),
+            high_bit_rate: get_bit(response, 27),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct AmpCapabilitiesInfo {
+    offset: u8,
+    num_steps: u8,
+    step_size: u8,
+    mute_capable: bool,
+}
+
+impl AmpCapabilitiesInfo {
+    fn new(response: u32) -> Self {
+        AmpCapabilitiesInfo {
+            offset: response.bitand(0b0111_1111) as u8,
+            num_steps: (response >> 8).bitand(0b0111_1111) as u8,
+            step_size: (response >> 16).bitand(0b0111_1111) as u8,
+            mute_capable: get_bit(response, 31),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct ConnectionListLengthInfo {
+    connection_list_length: u8,
+    long_form: bool,
+}
+
+impl ConnectionListLengthInfo {
+    fn new(response: u32) -> Self {
+        ConnectionListLengthInfo {
+            connection_list_length: response.bitand(0b0111_1111) as u8,
+            long_form: get_bit(response, 7),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct SupportedPowerStatesInfo {
+    d0_sup: bool,
+    d1_sup: bool,
+    d2_sup: bool,
+    d3_sup: bool,
+    d3cold_sup: bool,
+    s3d3cold_sup: bool,
+    clkstop: bool,
+    epss: bool,
+}
+
+impl SupportedPowerStatesInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(SupportedPowerStatesInfo {
+                d0_sup: get_bit(response, 0),
+                d1_sup: get_bit(response, 1),
+                d2_sup: get_bit(response, 2),
+                d3_sup: get_bit(response, 3),
+                d3cold_sup: get_bit(response, 4),
+                s3d3cold_sup: get_bit(response, 29),
+                clkstop: get_bit(response, 30),
+                epss: get_bit(response, 31),
+            })
+        }
+        None
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct ProcessingCapabilitiesInfo {
+    benign: bool,
+    num_coeff: u8,
+}
+
+impl ProcessingCapabilitiesInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(ProcessingCapabilitiesInfo {
+                benign: get_bit(response, 0),
+                num_coeff: (response >> 8).bitand(0xFF) as u8,
+            })
+        }
+        None
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct GPIOCountInfo {
+    num_gpios: u8,
+    num_gpos: u8,
+    num_gpis: u8,
+    gpi_unsol: bool,
+    gpi_wake: bool,
+}
+
+impl GPIOCountInfo {
+    fn new(response: u32) -> Option<Self> {
+        if response != 0 {
+            return Option::from(GPIOCountInfo {
+                num_gpios: response.bitand(0xFF) as u8,
+                num_gpos: (response >> 8).bitand(0xFF) as u8,
+                num_gpis: (response >> 16).bitand(0xFF) as u8,
+                gpi_unsol: get_bit(response, 30),
+                gpi_wake: get_bit(response, 31),
+            })
+        }
         None
     }
 }

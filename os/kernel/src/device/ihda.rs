@@ -12,7 +12,7 @@ use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
 use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetInfo, WidgetNode, WidgetType};
-use crate::device::ihda_types::Parameter::{AudioWidgetCapabilities, FunctionGroupType, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, VendorId};
+use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -57,31 +57,24 @@ impl IHDA {
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&crs);
 
-        debug!("AFG Sample Size Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
+        debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
+        debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
+        debug!("AFG Audio Function Group Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().audio_function_group_caps());
+        debug!("AFG Sample Size, Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
         debug!("AFG Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
+        debug!("AFG Input Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().input_amp_caps());
+        debug!("AFG Output Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().output_amp_caps());
+        debug!("AFG Supported Power States: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().supported_power_states());
+        debug!("AFG Supported GPIO Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().gpio_count());
+
+        // wait a bit to have tim to read each print
+        Timer::wait(30000);
 
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
-            match widget.audio_widget_capabilities().widget_type() {
-                WidgetType::AudioOutput => {
-                    match widget.widget_info() {
-                        WidgetInfo::AudioOutputConverter(ssrc_info, sf_info) => {
-                            debug!("Widget Sample Size Rate CAPs: {:?}", ssrc_info);
-                            debug!("Widget Stream Formats: {:?}", sf_info);
-                        }
-                        _ => panic!("Audio output converter widget has no valid widget info!")
-                    }
-                }
-                WidgetType::AudioInput => {}
-                WidgetType::AudioMixer => {}
-                WidgetType::AudioSelector => {}
-                WidgetType::PinComplex => {}
-                WidgetType::PowerWidget => {}
-                WidgetType::VolumeKnobWidget => {}
-                WidgetType::BeepGeneratorWidget => {}
-                WidgetType::VendorDefinedAudioWidget => {}
-            }
-            debug!("widget found: {:?}", widget.audio_widget_capabilities().widget_type());
+            debug!("WIDGET FOUND: {:?}", widget);
+            // wait a bit to have tim to read each print
+            Timer::wait(30000);
         }
 
         // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
@@ -297,6 +290,10 @@ impl IHDA {
             response = RegisterInterface::immediate_command(&crs, command);
             let function_group_type_info = ResponseParser::get_parameter_function_group_type(response);
 
+            command = CommandBuilder::get_parameter(&fg_address, AudioFunctionGroupCapabilities);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let afg_caps = ResponseParser::get_parameter_audio_function_group_capabilities(response);
+
             command = CommandBuilder::get_parameter(&fg_address, SampleSizeRateCAPs);
             response = RegisterInterface::immediate_command(&crs, command);
             let sample_size_rate_caps = ResponseParser::get_parameter_sample_size_rate_caps(response);
@@ -305,9 +302,36 @@ impl IHDA {
             response = RegisterInterface::immediate_command(&crs, command);
             let stream_formats = ResponseParser::get_parameter_stream_formats(response);
 
+            command = CommandBuilder::get_parameter(&fg_address, InputAmpCapabilities);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+
+            command = CommandBuilder::get_parameter(&fg_address, OutputAmpCapabilities);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
+
+            command = CommandBuilder::get_parameter(&fg_address, SupportedPowerStates);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+
+            command = CommandBuilder::get_parameter(&fg_address, GPIOCount);
+            response = RegisterInterface::immediate_command(&crs, command);
+            let gpio_count = ResponseParser::get_parameter_gpio_count(response);
+
             let widgets = IHDA::scan_function_group_for_available_widgets(crs, &fg_address, &subordinate_node_count_info);
 
-            fg_nodes.push(FunctionGroupNode::new(fg_address, subordinate_node_count_info, function_group_type_info, sample_size_rate_caps, stream_formats, widgets));
+            fg_nodes.push(FunctionGroupNode::new(
+                fg_address,
+                subordinate_node_count_info,
+                function_group_type_info,
+                afg_caps,
+                sample_size_rate_caps,
+                stream_formats,
+                input_amp_caps,
+                output_amp_caps,
+                supported_power_states,
+                gpio_count,
+                widgets));
         }
         fg_nodes
     }
@@ -340,19 +364,94 @@ impl IHDA {
                     response = RegisterInterface::immediate_command(&crs, command);
                     let sf_info = ResponseParser::get_parameter_stream_formats(response);
 
-                    widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info);
-                }
-                // WidgetType::AudioInput => {}
-                // WidgetType::AudioMixer => {}
-                // WidgetType::AudioSelector => {}
-                // WidgetType::PinComplex => {}
-                // WidgetType::PowerWidget => {}
-                // WidgetType::VolumeKnobWidget => {}
-                // WidgetType::BeepGeneratorWidget => {}
-                // WidgetType::VendorDefinedAudioWidget => {}
-                _ => widget_info = WidgetInfo::Selector
-            }
+                    command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
 
+                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+
+                    widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
+                }
+                WidgetType::AudioInput => {
+                    command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let ssrc_info = ResponseParser::get_parameter_sample_size_rate_caps(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let sf_info = ResponseParser::get_parameter_stream_formats(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let connection_list_length = ResponseParser::get_parameter_connection_list_length(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+
+                    widget_info = WidgetInfo::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
+                }
+                WidgetType::AudioMixer => {
+                    widget_info = WidgetInfo::Mixer;
+                }
+                WidgetType::AudioSelector => {
+                    widget_info = WidgetInfo::Selector;
+                }
+
+                WidgetType::PinComplex => {
+                    command = CommandBuilder::get_parameter(&widget_address, PinCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let pin_caps = ResponseParser::get_parameter_pin_capabilities(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let connection_list_length = ResponseParser::get_parameter_connection_list_length(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+
+                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
+                    response = RegisterInterface::immediate_command(&crs, command);
+                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+
+                    widget_info = WidgetInfo::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
+                }
+                WidgetType::PowerWidget => {
+                    widget_info = WidgetInfo::Power;
+                }
+                WidgetType::VolumeKnobWidget => {
+                    widget_info = WidgetInfo::VolumeKnob;
+                }
+                WidgetType::BeepGeneratorWidget => {
+                    widget_info = WidgetInfo::BeepGenerator;
+                }
+                WidgetType::VendorDefinedAudioWidget => {
+                    widget_info = WidgetInfo::VendorDefined;
+                }
+            }
 
             widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
         }
