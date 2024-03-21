@@ -47,8 +47,8 @@ impl IHDA {
         info!("IHDA configuration space set up");
 
 
-        IHDA::setup_corb(&crs);
-        IHDA::setup_rirb(&crs);
+        IHDA::init_corb(&crs);
+        IHDA::init_rirb(&crs);
         IHDA::start_corb(&crs);
         IHDA::start_rirb(&crs);
 
@@ -159,7 +159,7 @@ impl IHDA {
         crs.wakeen().set_all_bits();
     }
 
-    fn setup_corb(crs: &ControllerRegisterSet) {
+    fn init_corb(crs: &ControllerRegisterSet) {
         // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
         crs.corbctl().clear_all_bits();
 
@@ -180,6 +180,7 @@ impl IHDA {
                 crs.corbubase().write(ubase);
             }
         }
+        IHDA::reset_corb(crs);
     }
 
     fn reset_corb(crs: &ControllerRegisterSet) {
@@ -204,7 +205,7 @@ impl IHDA {
         // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
     }
 
-    fn setup_rirb(crs: &ControllerRegisterSet) {
+    fn init_rirb(crs: &ControllerRegisterSet) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
         crs.rirbctl().clear_all_bits();
 
