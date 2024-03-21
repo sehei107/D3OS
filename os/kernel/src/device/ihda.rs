@@ -11,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{Codec, CommandBuilder, ControllerRegisterSet, FunctionGroupNode, NodeAddress, ResponseParser, RootNode, SubordinateNodeCountInfo, WidgetInfo, WidgetNode, WidgetType};
+use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, CommandBuilder, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, ResponseParser, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
 use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -247,17 +247,18 @@ impl IHDA {
                 let root_node_addr = NodeAddress::new(index, 0x0);
                 let mut response;
 
+
                 let vendor_id = CommandBuilder::get_parameter(&root_node_addr, VendorId);
                 response = RegisterInterface::immediate_command(&crs, vendor_id);
-                let vendor_id_info = ResponseParser::get_parameter_vendor_id(response);
+                let vendor_id_info = VendorIdInfo::try_from(ResponseParser::get_parameter(VendorId, response)).unwrap();
 
                 let revision_id = CommandBuilder::get_parameter(&root_node_addr, RevisionId);
                 response = RegisterInterface::immediate_command(&crs, revision_id);
-                let revision_id_info = ResponseParser::get_parameter_revision_id(response);
+                let revision_id_info = RevisionIdInfo::try_from(ResponseParser::get_parameter(RevisionId, response)).unwrap();
 
                 let subordinate_node_count = CommandBuilder::get_parameter(&root_node_addr, SubordinateNodeCount);
                 response = RegisterInterface::immediate_command(&crs, subordinate_node_count);
-                let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
+                let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(ResponseParser::get_parameter(SubordinateNodeCount, response)).unwrap();
 
                 let function_group_nodes = IHDA::scan_codec_for_available_function_groups(crs, &root_node_addr, &subordinate_node_count_info);
 
@@ -284,39 +285,39 @@ impl IHDA {
 
             command = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
             response = RegisterInterface::immediate_command(&crs, command);
-            let subordinate_node_count_info = ResponseParser::get_parameter_subordinate_node_count(response);
+            let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(ResponseParser::get_parameter(SubordinateNodeCount, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
             response = RegisterInterface::immediate_command(&crs, command);
-            let function_group_type_info = ResponseParser::get_parameter_function_group_type(response);
+            let function_group_type_info = FunctionGroupTypeInfo::try_from(ResponseParser::get_parameter(FunctionGroupType, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, AudioFunctionGroupCapabilities);
             response = RegisterInterface::immediate_command(&crs, command);
-            let afg_caps = ResponseParser::get_parameter_audio_function_group_capabilities(response);
+            let afg_caps = AudioFunctionGroupCapabilitiesInfo::try_from(ResponseParser::get_parameter(AudioFunctionGroupCapabilities, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, SampleSizeRateCAPs);
             response = RegisterInterface::immediate_command(&crs, command);
-            let sample_size_rate_caps = ResponseParser::get_parameter_sample_size_rate_caps(response);
+            let sample_size_rate_caps = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, StreamFormats);
             response = RegisterInterface::immediate_command(&crs, command);
-            let stream_formats = ResponseParser::get_parameter_stream_formats(response);
+            let stream_formats = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, InputAmpCapabilities);
             response = RegisterInterface::immediate_command(&crs, command);
-            let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+            let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, OutputAmpCapabilities);
             response = RegisterInterface::immediate_command(&crs, command);
-            let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
+            let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, SupportedPowerStates);
             response = RegisterInterface::immediate_command(&crs, command);
-            let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+            let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
 
             command = CommandBuilder::get_parameter(&fg_address, GPIOCount);
             response = RegisterInterface::immediate_command(&crs, command);
-            let gpio_count = ResponseParser::get_parameter_gpio_count(response);
+            let gpio_count = GPIOCountInfo::try_from(ResponseParser::get_parameter(GPIOCount, response)).unwrap();
 
             let widgets = IHDA::scan_function_group_for_available_widgets(crs, &fg_address, &subordinate_node_count_info);
 
@@ -352,56 +353,56 @@ impl IHDA {
 
             command = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
             response = RegisterInterface::immediate_command(&crs, command);
-            let audio_widget_capabilities_info = ResponseParser::get_parameter_audio_widget_capabilities(response);
+            let audio_widget_capabilities_info = AudioWidgetCapabilitiesInfo::try_from(ResponseParser::get_parameter(AudioWidgetCapabilities, response)).unwrap();
 
             match audio_widget_capabilities_info.widget_type() {
                 WidgetType::AudioOutput => {
                     command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let ssrc_info = ResponseParser::get_parameter_sample_size_rate_caps(response);
+                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let sf_info = ResponseParser::get_parameter_stream_formats(response);
+                    let sf_info = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
+                    let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
 
                     widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
                 }
                 WidgetType::AudioInput => {
                     command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let ssrc_info = ResponseParser::get_parameter_sample_size_rate_caps(response);
+                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let sf_info = ResponseParser::get_parameter_stream_formats(response);
+                    let sf_info = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+                    let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let connection_list_length = ResponseParser::get_parameter_connection_list_length(response);
+                    let connection_list_length = ConnectionListLengthInfo::try_from(ResponseParser::get_parameter(ConnectionListLength, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
 
                     widget_info = WidgetInfo::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }
@@ -415,27 +416,27 @@ impl IHDA {
                 WidgetType::PinComplex => {
                     command = CommandBuilder::get_parameter(&widget_address, PinCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let pin_caps = ResponseParser::get_parameter_pin_capabilities(response);
+                    let pin_caps = PinCapabilitiesInfo::try_from(ResponseParser::get_parameter(PinCapabilities, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let input_amp_caps = ResponseParser::get_parameter_input_amp_capabilities(response);
+                    let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let output_amp_caps = ResponseParser::get_parameter_output_amp_capabilities(response);
+                    let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let connection_list_length = ResponseParser::get_parameter_connection_list_length(response);
+                    let connection_list_length = ConnectionListLengthInfo::try_from(ResponseParser::get_parameter(ConnectionListLength, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = ResponseParser::get_parameter_supported_power_states(response);
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
 
                     command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
                     response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ResponseParser::get_parameter_processing_capabilities(response);
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
 
                     widget_info = WidgetInfo::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }

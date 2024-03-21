@@ -247,14 +247,14 @@ pub struct FunctionGroupNode {
     address: NodeAddress,
     subordinate_node_count: SubordinateNodeCountInfo,
     function_group_type: FunctionGroupTypeInfo,
-    audio_function_group_caps: Option<AudioFunctionGroupCapabilitiesInfo>,
-    sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
-    stream_formats: Option<StreamFormatsInfo>,
+    audio_function_group_caps: AudioFunctionGroupCapabilitiesInfo,
+    sample_size_rate_caps: SampleSizeRateCAPsInfo,
+    stream_formats: StreamFormatsInfo,
     input_amp_caps: AmpCapabilitiesInfo,
     output_amp_caps: AmpCapabilitiesInfo,
     // function group node must provide a SupportedPowerStatesInfo, but QEMU doesn't do it... so this only an Option<SupportedPowerStatesInfo> for now
-    supported_power_states: Option<SupportedPowerStatesInfo>,
-    gpio_count: Option<GPIOCountInfo>,
+    supported_power_states: SupportedPowerStatesInfo,
+    gpio_count: GPIOCountInfo,
     widgets: Vec<WidgetNode>,
 }
 
@@ -269,13 +269,13 @@ impl FunctionGroupNode {
         address: NodeAddress,
         subordinate_node_count: SubordinateNodeCountInfo,
         function_group_type: FunctionGroupTypeInfo,
-        audio_function_group_caps: Option<AudioFunctionGroupCapabilitiesInfo>,
-        sample_size_rate_caps: Option<SampleSizeRateCAPsInfo>,
-        stream_formats: Option<StreamFormatsInfo>,
+        audio_function_group_caps: AudioFunctionGroupCapabilitiesInfo,
+        sample_size_rate_caps: SampleSizeRateCAPsInfo,
+        stream_formats: StreamFormatsInfo,
         input_amp_caps: AmpCapabilitiesInfo,
         output_amp_caps: AmpCapabilitiesInfo,
-        supported_power_states: Option<SupportedPowerStatesInfo>,
-        gpio_count: Option<GPIOCountInfo>,
+        supported_power_states: SupportedPowerStatesInfo,
+        gpio_count: GPIOCountInfo,
         widgets: Vec<WidgetNode>
     ) -> Self {
         FunctionGroupNode {
@@ -325,19 +325,19 @@ impl WidgetNode {
 #[derive(Debug)]
 pub enum WidgetInfo {
     AudioOutputConverter(
-        Option<SampleSizeRateCAPsInfo>,
-        Option<StreamFormatsInfo>,
+        SampleSizeRateCAPsInfo,
+        StreamFormatsInfo,
         AmpCapabilitiesInfo,
-        Option<SupportedPowerStatesInfo>,
-        Option<ProcessingCapabilitiesInfo>,
+        SupportedPowerStatesInfo,
+        ProcessingCapabilitiesInfo,
     ),
     AudioInputConverter(
-        Option<SampleSizeRateCAPsInfo>,
-        Option<StreamFormatsInfo>,
+        SampleSizeRateCAPsInfo,
+        StreamFormatsInfo,
         AmpCapabilitiesInfo,
         ConnectionListLengthInfo,
-        Option<SupportedPowerStatesInfo>,
-        Option<ProcessingCapabilitiesInfo>,
+        SupportedPowerStatesInfo,
+        ProcessingCapabilitiesInfo,
     ),
     // first AmpCapabilitiesInfo is input amp caps and second AmpCapabilitiesInfo is output amp caps
     PinComplex(
@@ -345,8 +345,8 @@ pub enum WidgetInfo {
         AmpCapabilitiesInfo,
         AmpCapabilitiesInfo,
         ConnectionListLengthInfo,
-        Option<SupportedPowerStatesInfo>,
-        Option<ProcessingCapabilitiesInfo>,
+        SupportedPowerStatesInfo,
+        ProcessingCapabilitiesInfo,
     ),
     Mixer,
     Selector,
@@ -381,6 +381,7 @@ impl CommandBuilder {
 }
 
 // compare to table 140 in section 7.3.6 of the specification
+#[derive(Debug)]
 pub enum Parameter {
     VendorId,
     RevisionId,
@@ -426,65 +427,46 @@ impl Parameter {
 pub struct ResponseParser;
 
 impl ResponseParser {
-    pub fn get_parameter_vendor_id(response: u32) -> VendorIdInfo {
-        VendorIdInfo::new(response)
+    pub fn get_parameter(parameter: Parameter, response: u32) -> Info {
+        match parameter {
+            Parameter::VendorId => Info::VendorId(VendorIdInfo::new(response)),
+            Parameter::RevisionId => Info::RevisionId(RevisionIdInfo::new(response)),
+            Parameter::SubordinateNodeCount => Info::SubordinateNodeCount(SubordinateNodeCountInfo::new(response)),
+            Parameter::FunctionGroupType => Info::FunctionGroupType(FunctionGroupTypeInfo::new(response)),
+            Parameter::AudioFunctionGroupCapabilities => Info::AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo::new(response)),
+            Parameter::AudioWidgetCapabilities => Info::AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo::new(response)),
+            Parameter::SampleSizeRateCAPs => Info::SampleSizeRateCAPs(SampleSizeRateCAPsInfo::new(response)),
+            Parameter::StreamFormats => Info::StreamFormats(StreamFormatsInfo::new(response)),
+            Parameter::PinCapabilities => Info::PinCapabilities(PinCapabilitiesInfo::new(response)),
+            Parameter::InputAmpCapabilities => Info::InputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
+            Parameter::OutputAmpCapabilities => Info::OutputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
+            Parameter::ConnectionListLength => Info::ConnectionListLength(ConnectionListLengthInfo::new(response)),
+            Parameter::SupportedPowerStates => Info::SupportedPowerStates(SupportedPowerStatesInfo::new(response)),
+            Parameter::ProcessingCapabilities => Info::ProcessingCapabilities(ProcessingCapabilitiesInfo::new(response)),
+            Parameter::GPIOCount => Info::GPIOCount(GPIOCountInfo::new(response)),
+            Parameter::VolumeKnobCapabilities => Info::VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo::new(response)),
+        }
     }
+}
 
-    pub fn get_parameter_revision_id(response: u32) -> RevisionIdInfo {
-        RevisionIdInfo::new(response)
-    }
-
-    pub fn get_parameter_subordinate_node_count(response: u32) -> SubordinateNodeCountInfo {
-        SubordinateNodeCountInfo::new(response)
-    }
-
-    pub fn get_parameter_function_group_type(response: u32) -> FunctionGroupTypeInfo {
-        FunctionGroupTypeInfo::new(response)
-    }
-
-    pub fn get_parameter_audio_function_group_capabilities(response: u32) -> Option<AudioFunctionGroupCapabilitiesInfo> {
-        AudioFunctionGroupCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_audio_widget_capabilities(response: u32) -> AudioWidgetCapabilitiesInfo {
-        AudioWidgetCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_sample_size_rate_caps(response: u32) -> Option<SampleSizeRateCAPsInfo> {
-        SampleSizeRateCAPsInfo::new(response)
-    }
-
-    pub fn get_parameter_stream_formats(response: u32) -> Option<StreamFormatsInfo> {
-        StreamFormatsInfo::new(response)
-    }
-
-    pub fn get_parameter_pin_capabilities(response: u32) -> PinCapabilitiesInfo {
-        PinCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_input_amp_capabilities(response: u32) -> AmpCapabilitiesInfo {
-        AmpCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_output_amp_capabilities(response: u32) -> AmpCapabilitiesInfo {
-        AmpCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_connection_list_length(response: u32) -> ConnectionListLengthInfo {
-        ConnectionListLengthInfo::new(response)
-    }
-
-    pub fn get_parameter_supported_power_states(response: u32) -> Option<SupportedPowerStatesInfo> {
-        SupportedPowerStatesInfo::new(response)
-    }
-
-    pub fn get_parameter_processing_capabilities(response: u32) -> Option<ProcessingCapabilitiesInfo> {
-        ProcessingCapabilitiesInfo::new(response)
-    }
-
-    pub fn get_parameter_gpio_count(response: u32) -> Option<GPIOCountInfo> {
-        GPIOCountInfo::new(response)
-    }
+#[derive(Debug)]
+pub enum Info {
+    VendorId(VendorIdInfo),
+    RevisionId(RevisionIdInfo),
+    SubordinateNodeCount(SubordinateNodeCountInfo),
+    FunctionGroupType(FunctionGroupTypeInfo),
+    AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo),
+    AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo),
+    SampleSizeRateCAPs(SampleSizeRateCAPsInfo),
+    StreamFormats(StreamFormatsInfo),
+    PinCapabilities(PinCapabilitiesInfo),
+    InputAmpCapabilities(AmpCapabilitiesInfo),
+    OutputAmpCapabilities(AmpCapabilitiesInfo),
+    ConnectionListLength(ConnectionListLengthInfo),
+    SupportedPowerStates(SupportedPowerStatesInfo),
+    ProcessingCapabilities(ProcessingCapabilitiesInfo),
+    GPIOCount(GPIOCountInfo),
+    VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo),
 }
 
 #[derive(Debug, Getters)]
@@ -500,6 +482,17 @@ impl VendorIdInfo {
             vendor_id: (response >> 16).bitand(0xFFFF) as u16,
         }
 
+    }
+}
+
+impl TryFrom<Info> for VendorIdInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+                    Info::VendorId(info) => Ok(info),
+                    e => Err(e),
+                }
     }
 }
 
@@ -522,6 +515,17 @@ impl RevisionIdInfo {
     }
 }
 
+impl TryFrom<Info> for RevisionIdInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::RevisionId(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
 #[derive(Debug, Getters)]
 pub struct SubordinateNodeCountInfo {
     total_number_of_nodes: u8,
@@ -535,6 +539,17 @@ impl SubordinateNodeCountInfo {
             starting_node_number: (response >> 16).bitand(0xFF) as u8,
         }
 
+    }
+}
+
+impl TryFrom<Info> for SubordinateNodeCountInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::SubordinateNodeCount(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -559,6 +574,17 @@ impl FunctionGroupTypeInfo {
     }
 }
 
+impl TryFrom<Info> for FunctionGroupTypeInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::FunctionGroupType(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum FunctionGroupType {
     AudioFunctionGroup,
@@ -574,15 +600,23 @@ pub struct AudioFunctionGroupCapabilitiesInfo {
 }
 
 impl AudioFunctionGroupCapabilitiesInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(AudioFunctionGroupCapabilitiesInfo {
-                output_delay: response.bitand(0xF) as u8,
-                input_delay: (response >> 8).bitand(0xF) as u8,
-                beep_gen: get_bit(response, 16),
-            })
+    fn new(response: u32) -> Self {
+    AudioFunctionGroupCapabilitiesInfo {
+            output_delay: response.bitand(0xF) as u8,
+            input_delay: (response >> 8).bitand(0xF) as u8,
+            beep_gen: get_bit(response, 16),
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for AudioFunctionGroupCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::AudioFunctionGroupCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -640,6 +674,17 @@ impl AudioWidgetCapabilitiesInfo {
     }
 }
 
+impl TryFrom<Info> for AudioWidgetCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::AudioWidgetCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum WidgetType {
     AudioOutput,
@@ -675,29 +720,37 @@ pub struct SampleSizeRateCAPsInfo {
 }
 
 impl SampleSizeRateCAPsInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(SampleSizeRateCAPsInfo {
-                support_8000hz: get_bit(response, 0),
-                support_11025hz: get_bit(response, 1),
-                support_16000hz: get_bit(response, 2),
-                support_22050hz: get_bit(response, 3),
-                support_32000hz: get_bit(response, 4),
-                support_44100hz: get_bit(response, 5),
-                support_48000hz: get_bit(response, 6),
-                support_88200hz: get_bit(response, 7),
-                support_96000hz: get_bit(response, 8),
-                support_176400hz: get_bit(response, 9),
-                support_192000hz: get_bit(response, 10),
-                support_384000hz: get_bit(response, 11),
-                support_8bit: get_bit(response, 16),
-                support_16bit: get_bit(response, 17),
-                support_20bit: get_bit(response, 18),
-                support_24bit: get_bit(response, 19),
-                support_32bit: get_bit(response, 20),
-            })
+    fn new(response: u32) -> Self {
+        SampleSizeRateCAPsInfo {
+            support_8000hz: get_bit(response, 0),
+            support_11025hz: get_bit(response, 1),
+            support_16000hz: get_bit(response, 2),
+            support_22050hz: get_bit(response, 3),
+            support_32000hz: get_bit(response, 4),
+            support_44100hz: get_bit(response, 5),
+            support_48000hz: get_bit(response, 6),
+            support_88200hz: get_bit(response, 7),
+            support_96000hz: get_bit(response, 8),
+            support_176400hz: get_bit(response, 9),
+            support_192000hz: get_bit(response, 10),
+            support_384000hz: get_bit(response, 11),
+            support_8bit: get_bit(response, 16),
+            support_16bit: get_bit(response, 17),
+            support_20bit: get_bit(response, 18),
+            support_24bit: get_bit(response, 19),
+            support_32bit: get_bit(response, 20),
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for SampleSizeRateCAPsInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::SampleSizeRateCAPs(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -709,15 +762,23 @@ pub struct StreamFormatsInfo {
 }
 
 impl StreamFormatsInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(StreamFormatsInfo {
-                pcm: get_bit(response, 0),
-                float32: get_bit(response, 1),
-                ac3: get_bit(response, 2),
-            })
+    fn new(response: u32) -> Self {
+        StreamFormatsInfo {
+            pcm: get_bit(response, 0),
+            float32: get_bit(response, 1),
+            ac3: get_bit(response, 2),
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for StreamFormatsInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::StreamFormats(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -756,6 +817,17 @@ impl PinCapabilitiesInfo {
     }
 }
 
+impl TryFrom<Info> for PinCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::PinCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
 #[derive(Debug, Getters)]
 pub struct AmpCapabilitiesInfo {
     offset: u8,
@@ -775,6 +847,18 @@ impl AmpCapabilitiesInfo {
     }
 }
 
+impl TryFrom<Info> for AmpCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::InputAmpCapabilities(info) => Ok(info),
+            Info::OutputAmpCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
 #[derive(Debug, Getters)]
 pub struct ConnectionListLengthInfo {
     connection_list_length: u8,
@@ -786,6 +870,17 @@ impl ConnectionListLengthInfo {
         ConnectionListLengthInfo {
             connection_list_length: response.bitand(0b0111_1111) as u8,
             long_form: get_bit(response, 7),
+        }
+    }
+}
+
+impl TryFrom<Info> for ConnectionListLengthInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ConnectionListLength(info) => Ok(info),
+            e => Err(e),
         }
     }
 }
@@ -803,20 +898,28 @@ pub struct SupportedPowerStatesInfo {
 }
 
 impl SupportedPowerStatesInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(SupportedPowerStatesInfo {
-                d0_sup: get_bit(response, 0),
-                d1_sup: get_bit(response, 1),
-                d2_sup: get_bit(response, 2),
-                d3_sup: get_bit(response, 3),
-                d3cold_sup: get_bit(response, 4),
-                s3d3cold_sup: get_bit(response, 29),
-                clkstop: get_bit(response, 30),
-                epss: get_bit(response, 31),
-            })
+    fn new(response: u32) -> Self {
+        SupportedPowerStatesInfo {
+            d0_sup: get_bit(response, 0),
+            d1_sup: get_bit(response, 1),
+            d2_sup: get_bit(response, 2),
+            d3_sup: get_bit(response, 3),
+            d3cold_sup: get_bit(response, 4),
+            s3d3cold_sup: get_bit(response, 29),
+            clkstop: get_bit(response, 30),
+            epss: get_bit(response, 31),
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for SupportedPowerStatesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::SupportedPowerStates(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -827,14 +930,22 @@ pub struct ProcessingCapabilitiesInfo {
 }
 
 impl ProcessingCapabilitiesInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(ProcessingCapabilitiesInfo {
-                benign: get_bit(response, 0),
-                num_coeff: (response >> 8).bitand(0xFF) as u8,
-            })
+    fn new(response: u32) -> Self {
+        ProcessingCapabilitiesInfo {
+            benign: get_bit(response, 0),
+            num_coeff: (response >> 8).bitand(0xFF) as u8,
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for ProcessingCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ProcessingCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
@@ -848,17 +959,51 @@ pub struct GPIOCountInfo {
 }
 
 impl GPIOCountInfo {
-    fn new(response: u32) -> Option<Self> {
-        if response != 0 {
-            return Option::from(GPIOCountInfo {
-                num_gpios: response.bitand(0xFF) as u8,
-                num_gpos: (response >> 8).bitand(0xFF) as u8,
-                num_gpis: (response >> 16).bitand(0xFF) as u8,
-                gpi_unsol: get_bit(response, 30),
-                gpi_wake: get_bit(response, 31),
-            })
+    fn new(response: u32) -> Self {
+        GPIOCountInfo {
+            num_gpios: response.bitand(0xFF) as u8,
+            num_gpos: (response >> 8).bitand(0xFF) as u8,
+            num_gpis: (response >> 16).bitand(0xFF) as u8,
+            gpi_unsol: get_bit(response, 30),
+            gpi_wake: get_bit(response, 31),
         }
-        None
+    }
+}
+
+impl TryFrom<Info> for GPIOCountInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::GPIOCount(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct VolumeKnobCapabilitiesInfo {
+    num_steps: u8,
+    delta: bool,
+}
+
+impl VolumeKnobCapabilitiesInfo {
+    fn new(response: u32) -> Self {
+        VolumeKnobCapabilitiesInfo {
+            num_steps: response.bitand(0b0111_1111) as u8,
+            delta: get_bit(response, 7),
+        }
+    }
+}
+
+impl TryFrom<Info> for VolumeKnobCapabilitiesInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::VolumeKnobCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
     }
 }
 
