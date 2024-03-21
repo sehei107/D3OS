@@ -11,7 +11,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, CommandBuilder, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, ResponseParser, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
+use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RegisterInterface, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
 use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -37,25 +37,25 @@ impl InterruptHandler for IHDAInterruptHandler {
 
 impl IHDA {
     pub fn new() -> Self {
-        let crs = IHDA::connect_controller();
+        let register_interface = IHDA::connect_controller();
 
         info!("Initializing IHDA sound card");
-        IHDA::reset_controller(&crs);
+        IHDA::reset_controller(register_interface.crs());
         info!("IHDA Controller reset complete");
 
-        IHDA::setup_ihda_config_space(&crs);
+        IHDA::setup_ihda_config_space(register_interface.crs());
         info!("IHDA configuration space set up");
 
 
-        IHDA::init_corb(&crs);
-        IHDA::init_rirb(&crs);
-        IHDA::start_corb(&crs);
-        IHDA::start_rirb(&crs);
+        IHDA::init_corb(register_interface.crs());
+        IHDA::init_rirb(register_interface.crs());
+        IHDA::start_corb(register_interface.crs());
+        IHDA::start_rirb(register_interface.crs());
 
         info!("CORB and RIRB set up and running");
 
         // interview sound card
-        let codecs = IHDA::scan_for_available_codecs(&crs);
+        let codecs = IHDA::scan_for_available_codecs(&register_interface);
 
         debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
         debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
@@ -83,7 +83,7 @@ impl IHDA {
         IHDA {}
     }
 
-    fn connect_controller() -> ControllerRegisterSet {
+    fn connect_controller() -> RegisterInterface {
         let pci = pci_bus();
 
         // find ihda devices
@@ -96,8 +96,6 @@ impl IHDA {
 
             match bar0 {
                 Bar::Memory32 { address, size, .. } => {
-                    let crs = ControllerRegisterSet::new(address);
-
                     // set BME bit in command register of PCI configuration space
                     device.update_command(pci.config_space(), |command| {
                         command.bitor(CommandRegister::BUS_MASTER_ENABLE)
@@ -123,7 +121,7 @@ impl IHDA {
                     // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
                     // will now result in a call of IHDAInterruptHandler's "trigger"-function.
 
-                    return crs;
+                    return RegisterInterface::new(address);
                 },
                 _ => { panic!("Invalid BAR! IHDA always uses Memory32") },
             }
@@ -180,7 +178,9 @@ impl IHDA {
                 crs.corbubase().write(ubase);
             }
         }
-        IHDA::reset_corb(crs);
+
+        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
+        // IHDA::reset_corb(crs);
     }
 
     fn reset_corb(crs: &ControllerRegisterSet) {
@@ -241,27 +241,17 @@ impl IHDA {
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
     // then find all function group nodes and widgets associated with a codec
-    fn scan_for_available_codecs(crs: &ControllerRegisterSet) -> Vec<Codec> {
+    fn scan_for_available_codecs(register_interface: &RegisterInterface) -> Vec<Codec> {
         let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
-            if crs.wakests().assert_bit(index) {
+            if register_interface.crs().wakests().assert_bit(index) {
                 let root_node_addr = NodeAddress::new(index, 0x0);
-                let mut response;
 
+                let vendor_id_info = VendorIdInfo::try_from(register_interface.get_parameter(&root_node_addr, &VendorId)).unwrap();
+                let revision_id_info = RevisionIdInfo::try_from(register_interface.get_parameter(&root_node_addr, &RevisionId)).unwrap();
+                let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(register_interface.get_parameter(&root_node_addr, &SubordinateNodeCount)).unwrap();
 
-                let vendor_id = CommandBuilder::get_parameter(&root_node_addr, VendorId);
-                response = RegisterInterface::immediate_command(&crs, vendor_id);
-                let vendor_id_info = VendorIdInfo::try_from(ResponseParser::get_parameter(VendorId, response)).unwrap();
-
-                let revision_id = CommandBuilder::get_parameter(&root_node_addr, RevisionId);
-                response = RegisterInterface::immediate_command(&crs, revision_id);
-                let revision_id_info = RevisionIdInfo::try_from(ResponseParser::get_parameter(RevisionId, response)).unwrap();
-
-                let subordinate_node_count = CommandBuilder::get_parameter(&root_node_addr, SubordinateNodeCount);
-                response = RegisterInterface::immediate_command(&crs, subordinate_node_count);
-                let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(ResponseParser::get_parameter(SubordinateNodeCount, response)).unwrap();
-
-                let function_group_nodes = IHDA::scan_codec_for_available_function_groups(crs, &root_node_addr, &subordinate_node_count_info);
+                let function_group_nodes = IHDA::scan_codec_for_available_function_groups(register_interface, &root_node_addr, &subordinate_node_count_info);
 
                 let root_node = RootNode::new(index, vendor_id_info, revision_id_info, subordinate_node_count_info, function_group_nodes);
                 codecs.push(Codec::new(index, root_node));
@@ -271,56 +261,27 @@ impl IHDA {
     }
 
     fn scan_codec_for_available_function_groups(
-        crs: &ControllerRegisterSet,
+        register_interface: &RegisterInterface,
         root_node_addr: &NodeAddress,
         snci: &SubordinateNodeCountInfo
     ) -> Vec<FunctionGroupNode> {
         let mut fg_nodes: Vec<FunctionGroupNode> = Vec::new();
         let codec_address = *root_node_addr.codec_address();
-        let mut command;
-        let mut response;
 
         for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let fg_address = NodeAddress::new(codec_address, node_id);
 
+            let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(register_interface.get_parameter(&fg_address, &SubordinateNodeCount)).unwrap();
+            let function_group_type_info = FunctionGroupTypeInfo::try_from(register_interface.get_parameter(&fg_address, &FunctionGroupType)).unwrap();
+            let afg_caps = AudioFunctionGroupCapabilitiesInfo::try_from(register_interface.get_parameter(&fg_address, &AudioFunctionGroupCapabilities)).unwrap();
+            let sample_size_rate_caps = SampleSizeRateCAPsInfo::try_from(register_interface.get_parameter(&fg_address, &SampleSizeRateCAPs)).unwrap();
+            let stream_formats = StreamFormatsInfo::try_from(register_interface.get_parameter(&fg_address, &StreamFormats)).unwrap();
+            let input_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&fg_address, &InputAmpCapabilities)).unwrap();
+            let output_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&fg_address, &OutputAmpCapabilities)).unwrap();
+            let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.get_parameter(&fg_address, &SupportedPowerStates)).unwrap();
+            let gpio_count = GPIOCountInfo::try_from(register_interface.get_parameter(&fg_address, &GPIOCount)).unwrap();
 
-            command = CommandBuilder::get_parameter(&fg_address, SubordinateNodeCount);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let subordinate_node_count_info = SubordinateNodeCountInfo::try_from(ResponseParser::get_parameter(SubordinateNodeCount, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, FunctionGroupType);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let function_group_type_info = FunctionGroupTypeInfo::try_from(ResponseParser::get_parameter(FunctionGroupType, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, AudioFunctionGroupCapabilities);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let afg_caps = AudioFunctionGroupCapabilitiesInfo::try_from(ResponseParser::get_parameter(AudioFunctionGroupCapabilities, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, SampleSizeRateCAPs);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let sample_size_rate_caps = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, StreamFormats);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let stream_formats = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, InputAmpCapabilities);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, OutputAmpCapabilities);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, SupportedPowerStates);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
-
-            command = CommandBuilder::get_parameter(&fg_address, GPIOCount);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let gpio_count = GPIOCountInfo::try_from(ResponseParser::get_parameter(GPIOCount, response)).unwrap();
-
-            let widgets = IHDA::scan_function_group_for_available_widgets(crs, &fg_address, &subordinate_node_count_info);
+            let widgets = IHDA::scan_function_group_for_available_widgets(register_interface, &fg_address, &subordinate_node_count_info);
 
             fg_nodes.push(FunctionGroupNode::new(
                 fg_address,
@@ -339,71 +300,35 @@ impl IHDA {
     }
 
     fn scan_function_group_for_available_widgets(
-        crs: &ControllerRegisterSet,
+        register_interface: &RegisterInterface,
         fg_addr: &NodeAddress,
         snci: &SubordinateNodeCountInfo
     ) -> Vec<WidgetNode> {
         let mut widgets: Vec<WidgetNode> = Vec::new();
         let codec_address = *fg_addr.codec_address();
-        let mut command;
-        let mut response;
 
         for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let widget_address = NodeAddress::new(codec_address, node_id);
             let widget_info: WidgetInfo;
-
-            command = CommandBuilder::get_parameter(&widget_address, AudioWidgetCapabilities);
-            response = RegisterInterface::immediate_command(&crs, command);
-            let audio_widget_capabilities_info = AudioWidgetCapabilitiesInfo::try_from(ResponseParser::get_parameter(AudioWidgetCapabilities, response)).unwrap();
+            let audio_widget_capabilities_info = AudioWidgetCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &AudioWidgetCapabilities)).unwrap();
 
             match audio_widget_capabilities_info.widget_type() {
                 WidgetType::AudioOutput => {
-                    command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let sf_info = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
+                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(register_interface.get_parameter(&widget_address, &SampleSizeRateCAPs)).unwrap();
+                    let sf_info = StreamFormatsInfo::try_from(register_interface.get_parameter(&widget_address, &StreamFormats)).unwrap();
+                    let output_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &OutputAmpCapabilities)).unwrap();
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.get_parameter(&widget_address, &SupportedPowerStates)).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &ProcessingCapabilities)).unwrap();
 
                     widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
                 }
                 WidgetType::AudioInput => {
-                    command = CommandBuilder::get_parameter(&widget_address, SampleSizeRateCAPs);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(ResponseParser::get_parameter(SampleSizeRateCAPs, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, StreamFormats);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let sf_info = StreamFormatsInfo::try_from(ResponseParser::get_parameter(StreamFormats, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let connection_list_length = ConnectionListLengthInfo::try_from(ResponseParser::get_parameter(ConnectionListLength, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
+                    let ssrc_info = SampleSizeRateCAPsInfo::try_from(register_interface.get_parameter(&widget_address, &SampleSizeRateCAPs)).unwrap();
+                    let sf_info = StreamFormatsInfo::try_from(register_interface.get_parameter(&widget_address, &StreamFormats)).unwrap();
+                    let input_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &InputAmpCapabilities)).unwrap();
+                    let connection_list_length = ConnectionListLengthInfo::try_from(register_interface.get_parameter(&widget_address, &ConnectionListLength)).unwrap();
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.get_parameter(&widget_address, &SupportedPowerStates)).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &ProcessingCapabilities)).unwrap();
 
                     widget_info = WidgetInfo::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }
@@ -415,29 +340,12 @@ impl IHDA {
                 }
 
                 WidgetType::PinComplex => {
-                    command = CommandBuilder::get_parameter(&widget_address, PinCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let pin_caps = PinCapabilitiesInfo::try_from(ResponseParser::get_parameter(PinCapabilities, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, InputAmpCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let input_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(InputAmpCapabilities, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, OutputAmpCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let output_amp_caps = AmpCapabilitiesInfo::try_from(ResponseParser::get_parameter(OutputAmpCapabilities, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, ConnectionListLength);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let connection_list_length = ConnectionListLengthInfo::try_from(ResponseParser::get_parameter(ConnectionListLength, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, SupportedPowerStates);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let supported_power_states = SupportedPowerStatesInfo::try_from(ResponseParser::get_parameter(SupportedPowerStates, response)).unwrap();
-
-                    command = CommandBuilder::get_parameter(&widget_address, ProcessingCapabilities);
-                    response = RegisterInterface::immediate_command(&crs, command);
-                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(ResponseParser::get_parameter(ProcessingCapabilities, response)).unwrap();
+                    let pin_caps = PinCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &PinCapabilities)).unwrap();
+                    let input_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &InputAmpCapabilities)).unwrap();
+                    let output_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &OutputAmpCapabilities)).unwrap();
+                    let connection_list_length = ConnectionListLengthInfo::try_from(register_interface.get_parameter(&widget_address, &ConnectionListLength)).unwrap();
+                    let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.get_parameter(&widget_address, &SupportedPowerStates)).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.get_parameter(&widget_address, &ProcessingCapabilities)).unwrap();
 
                     widget_info = WidgetInfo::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }
@@ -458,24 +366,5 @@ impl IHDA {
             widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
         }
         widgets
-    }
-}
-
-struct RegisterInterface;
-
-impl RegisterInterface {
-    fn immediate_command(crs: &ControllerRegisterSet, command: u32) -> u32 {
-        crs.icis().write(0b10);
-        crs.icoi().write(command);
-        crs.icis().write(0b1);
-        let start_timer = timer().read().systime_ms();
-        // value for CRST_TIMEOUT arbitrarily chosen
-        const ICIS_TIMEOUT: usize = 100;
-        while (crs.icis().read() & 0b10) != 0b10 {
-            if timer().read().systime_ms() > start_timer + ICIS_TIMEOUT {
-                panic!("IHDA immediate command timed out")
-            }
-        }
-        crs.icii().read()
     }
 }

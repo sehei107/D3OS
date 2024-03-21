@@ -4,8 +4,10 @@ use core::ops::BitAnd;
 use log::debug;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
+use crate::timer;
 
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
+const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 
 // representation of an IHDA register
 pub struct Register<T: LowerHex + PrimInt> {
@@ -107,70 +109,103 @@ pub struct ControllerRegisterSet {
 }
 
 impl ControllerRegisterSet {
-    pub fn new(mmio_address: u32) -> Self {
+    pub fn new(mmio_base_address: u32) -> Self {
         Self {
-            gcap: Register::new(mmio_address as *mut u16, "GCAP"),
-            vmin: Register::new((mmio_address + 0x2) as *mut u8, "VMIN"),
-            vmaj: Register::new((mmio_address + 0x3) as *mut u8, "VMAJ"),
-            outpay: Register::new((mmio_address + 0x4) as *mut u16, "OUTPAY"),
-            inpay: Register::new((mmio_address + 0x6) as *mut u16, "INPAY"),
-            gctl: Register::new((mmio_address + 0x8) as *mut u32, "GCTL"),
-            wakeen: Register::new((mmio_address + 0xC) as *mut u16, "WAKEEN"),
-            wakests: Register::new((mmio_address + 0xE) as *mut u16, "WAKESTS"),
-            gsts: Register::new((mmio_address + 0x10) as *mut u16, "GSTS"),
+            gcap: Register::new(mmio_base_address as *mut u16, "GCAP"),
+            vmin: Register::new((mmio_base_address + 0x2) as *mut u8, "VMIN"),
+            vmaj: Register::new((mmio_base_address + 0x3) as *mut u8, "VMAJ"),
+            outpay: Register::new((mmio_base_address + 0x4) as *mut u16, "OUTPAY"),
+            inpay: Register::new((mmio_base_address + 0x6) as *mut u16, "INPAY"),
+            gctl: Register::new((mmio_base_address + 0x8) as *mut u32, "GCTL"),
+            wakeen: Register::new((mmio_base_address + 0xC) as *mut u16, "WAKEEN"),
+            wakests: Register::new((mmio_base_address + 0xE) as *mut u16, "WAKESTS"),
+            gsts: Register::new((mmio_base_address + 0x10) as *mut u16, "GSTS"),
             // bytes with offset 0x12 to 0x17 are reserved
-            outstrmpay: Register::new((mmio_address + 0x18) as *mut u16, "OUTSTRMPAY"),
-            instrmpay: Register::new((mmio_address + 0x1A) as *mut u16, "INSTRMPAY"),
+            outstrmpay: Register::new((mmio_base_address + 0x18) as *mut u16, "OUTSTRMPAY"),
+            instrmpay: Register::new((mmio_base_address + 0x1A) as *mut u16, "INSTRMPAY"),
             // bytes with offset 0x1C to 0x1F are reserved
-            intctl: Register::new((mmio_address + 0x20) as *mut u32, "INTCTL"),
-            intsts: Register::new((mmio_address + 0x24) as *mut u32, "INTSTS"),
+            intctl: Register::new((mmio_base_address + 0x20) as *mut u32, "INTCTL"),
+            intsts: Register::new((mmio_base_address + 0x24) as *mut u32, "INTSTS"),
             // bytes with offset 0x28 to 0x2F are reserved
-            walclk: Register::new((mmio_address + 0x30) as *mut u32, "WALCLK"),
+            walclk: Register::new((mmio_base_address + 0x30) as *mut u32, "WALCLK"),
             // bytes with offset 0x34 to 0x37 are reserved
-            ssync: Register::new((mmio_address + 0x38) as *mut u32, "SSYNC"),
+            ssync: Register::new((mmio_base_address + 0x38) as *mut u32, "SSYNC"),
             // bytes with offset 0x3C to 0x3F are reserved
-            corblbase: Register::new((mmio_address + 0x40) as *mut u32, "CORBLBASE"),
-            corbubase: Register::new((mmio_address + 0x44) as *mut u32, "CORBUBASE"),
-            corbwp: Register::new((mmio_address + 0x48) as *mut u16, "CORBWP"),
-            corbrp: Register::new((mmio_address + 0x4A) as *mut u16, "CORBRP"),
-            corbctl: Register::new((mmio_address + 0x4C) as *mut u8, "CORBCTL"),
-            corbsts: Register::new((mmio_address + 0x4D) as *mut u8, "CORBSTS"),
-            corbsize: Register::new((mmio_address + 0x4E) as *mut u8, "CORBSIZE"),
+            corblbase: Register::new((mmio_base_address + 0x40) as *mut u32, "CORBLBASE"),
+            corbubase: Register::new((mmio_base_address + 0x44) as *mut u32, "CORBUBASE"),
+            corbwp: Register::new((mmio_base_address + 0x48) as *mut u16, "CORBWP"),
+            corbrp: Register::new((mmio_base_address + 0x4A) as *mut u16, "CORBRP"),
+            corbctl: Register::new((mmio_base_address + 0x4C) as *mut u8, "CORBCTL"),
+            corbsts: Register::new((mmio_base_address + 0x4D) as *mut u8, "CORBSTS"),
+            corbsize: Register::new((mmio_base_address + 0x4E) as *mut u8, "CORBSIZE"),
             // byte with offset 0x4F is reserved
-            rirblbase: Register::new((mmio_address + 0x50) as *mut u32, "RIRBLBASE"),
-            rirbubase: Register::new((mmio_address + 0x54) as *mut u32, "RIRBUBASE"),
-            rirbwp: Register::new((mmio_address + 0x58) as *mut u16, "RIRBWP"),
-            rintcnt: Register::new((mmio_address + 0x5A) as *mut u16, "RINTCNT"),
-            rirbctl: Register::new((mmio_address + 0x5C) as *mut u8, "RIRBCTL"),
-            rirbsts: Register::new((mmio_address + 0x5D) as *mut u8, "RIRBSTS"),
-            rirbsize: Register::new((mmio_address + 0x5E) as *mut u8, "RIRBSIZE"),
+            rirblbase: Register::new((mmio_base_address + 0x50) as *mut u32, "RIRBLBASE"),
+            rirbubase: Register::new((mmio_base_address + 0x54) as *mut u32, "RIRBUBASE"),
+            rirbwp: Register::new((mmio_base_address + 0x58) as *mut u16, "RIRBWP"),
+            rintcnt: Register::new((mmio_base_address + 0x5A) as *mut u16, "RINTCNT"),
+            rirbctl: Register::new((mmio_base_address + 0x5C) as *mut u8, "RIRBCTL"),
+            rirbsts: Register::new((mmio_base_address + 0x5D) as *mut u8, "RIRBSTS"),
+            rirbsize: Register::new((mmio_base_address + 0x5E) as *mut u8, "RIRBSIZE"),
             // byte with offset 0x5F is reserved
             // the following three immediate command registers from bytes 0x60 to 0x69 are optional
-            icoi: Register::new((mmio_address + 0x60) as *mut u32, "ICOI"),
-            icii: Register::new((mmio_address + 0x64) as *mut u32, "ICII"),
-            icis: Register::new((mmio_address + 0x68) as *mut u16, "ICIS"),
+            icoi: Register::new((mmio_base_address + 0x60) as *mut u32, "ICOI"),
+            icii: Register::new((mmio_base_address + 0x64) as *mut u32, "ICII"),
+            icis: Register::new((mmio_base_address + 0x68) as *mut u16, "ICIS"),
             // bytes with offset 0x6A to 0x6F are reserved
-            dpiblbase: Register::new((mmio_address + 0x70) as *mut u32, "DPIBLBASE"),
-            dpibubase: Register::new((mmio_address + 0x74) as *mut u32, "DPIBUBASE"),
+            dpiblbase: Register::new((mmio_base_address + 0x70) as *mut u32, "DPIBLBASE"),
+            dpibubase: Register::new((mmio_base_address + 0x74) as *mut u32, "DPIBUBASE"),
             // bytes with offset 0x78 to 0x7F are reserved
             // careful: the sd0ctl register is only 3 bytes long, so that reading the register as an u32 also reads the sd0sts register in the last byte
             // the last byte of the read value should therefore not be manipulated
-            sd0ctl: Register::new((mmio_address + 0x80) as *mut u32, "SD0CTL"),
-            sd0sts: Register::new((mmio_address + 0x83) as *mut u8, "SD0STS"),
-            sd0lpib: Register::new((mmio_address + 0x84) as *mut u32, "SD0LPIB"),
-            sd0cbl: Register::new((mmio_address + 0x88) as *mut u32, "SD0CBL"),
-            sd0lvi: Register::new((mmio_address + 0x8C) as *mut u16, "SD0LVI"),
+            sd0ctl: Register::new((mmio_base_address + 0x80) as *mut u32, "SD0CTL"),
+            sd0sts: Register::new((mmio_base_address + 0x83) as *mut u8, "SD0STS"),
+            sd0lpib: Register::new((mmio_base_address + 0x84) as *mut u32, "SD0LPIB"),
+            sd0cbl: Register::new((mmio_base_address + 0x88) as *mut u32, "SD0CBL"),
+            sd0lvi: Register::new((mmio_base_address + 0x8C) as *mut u16, "SD0LVI"),
             // bytes with offset 0x8E to 0x8F are reserved
-            sd0fifod: Register::new((mmio_address + 0x90) as *mut u16, "SD0FIFOD"),
-            sd0fmt: Register::new((mmio_address + 0x92) as *mut u16, "SD0FMT"),
+            sd0fifod: Register::new((mmio_base_address + 0x90) as *mut u16, "SD0FIFOD"),
+            sd0fmt: Register::new((mmio_base_address + 0x92) as *mut u16, "SD0FMT"),
             // bytes with offset 0x94 to 0x97 are reserved
-            sd0bdpl: Register::new((mmio_address + 0x98) as *mut u32, "SD0DPL"),
-            sd0bdpu: Register::new((mmio_address + 0x9C) as *mut u32, "SD0DPU"),
+            sd0bdpl: Register::new((mmio_base_address + 0x98) as *mut u32, "SD0DPL"),
+            sd0bdpu: Register::new((mmio_base_address + 0x9C) as *mut u32, "SD0DPU"),
             // registers for additional stream descriptors starting from byte A0 are optional
-            walclka: Register::new((mmio_address + 0x2030) as *mut u32, "WALCLKA"),
-            sd0lpiba: Register::new((mmio_address + 0x2084) as *mut u32, "SD0LPIBA"),
+            walclka: Register::new((mmio_base_address + 0x2030) as *mut u32, "WALCLKA"),
+            sd0lpiba: Register::new((mmio_base_address + 0x2084) as *mut u32, "SD0LPIBA"),
             // registers for additional link positions starting from byte 20A0 are optional
         }
+    }
+
+    fn immediate_command(&self, command: u32) -> u32 {
+        self.icis().write(0b10);
+        self.icoi().write(command);
+        self.icis().write(0b1);
+        let start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        while (self.icis().read() & 0b10) != 0b10 {
+            if timer().read().systime_ms() > start_timer + IMMEDIATE_COMMAND_TIMEOUT_IN_MS {
+                panic!("IHDA immediate command timed out")
+            }
+        }
+        self.icii().read()
+    }
+}
+
+#[derive(Getters)]
+pub struct RegisterInterface {
+    crs: ControllerRegisterSet,
+}
+
+impl RegisterInterface {
+    pub fn new(mmio_base_address: u32) -> Self {
+        RegisterInterface {
+            crs: ControllerRegisterSet::new(mmio_base_address),
+        }
+    }
+
+    pub fn get_parameter(&self, addr: &NodeAddress, parameter: &Parameter) -> Info {
+        let command = CommandBuilder::get_parameter(&addr, parameter);
+        let response = self.crs.immediate_command(command);
+        ResponseParser::get_parameter(response, parameter)
     }
 }
 
@@ -359,7 +394,7 @@ pub enum WidgetInfo {
 pub struct CommandBuilder;
 
 impl CommandBuilder {
-    pub fn get_parameter(node_address: &NodeAddress, parameter: Parameter) -> u32 {
+    pub fn get_parameter(node_address: &NodeAddress, parameter: &Parameter) -> u32 {
         Self::command_with_12bit_identifier_verb(node_address, 0xF00, parameter.id())
     }
 
@@ -427,7 +462,7 @@ impl Parameter {
 pub struct ResponseParser;
 
 impl ResponseParser {
-    pub fn get_parameter(parameter: Parameter, response: u32) -> Info {
+    pub fn get_parameter(response: u32, parameter: &Parameter) -> Info {
         match parameter {
             Parameter::VendorId => Info::VendorId(VendorIdInfo::new(response)),
             Parameter::RevisionId => Info::RevisionId(RevisionIdInfo::new(response)),
