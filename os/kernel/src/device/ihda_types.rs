@@ -1136,25 +1136,115 @@ impl TryFrom<Info> for ConnectionListEntryInfo {
 pub struct ConfigurationDefaultInfo {
     sequence: u8,
     default_association: u8,
-    misc: u8,
-    color: u8,
-    connection_type: u8,
-    default_device: u8,
-    location: u8,
-    port_connectivity: u8,
+    jack_detect_override: bool,
+    color: ConfigDefColor,
+    connection_type: ConfigDefConnectionType,
+    default_device: ConfigDefDefaultDevice,
+    geometric_location: ConfigDefGeometricLocation,
+    gross_location: ConfigDefGrossLocation,
+    port_connectivity: ConfigDefPortConnectivity,
 }
 
 impl ConfigurationDefaultInfo {
     fn new(response: u32) -> Self {
+        let gross_location = match (response >> 28).bitand(0b11) {
+            0b00 => ConfigDefGrossLocation::ExternalOnPrimaryChassis,
+            0b01 => ConfigDefGrossLocation::Internal,
+            0b10 => ConfigDefGrossLocation::SeparateChassis,
+            0b11 => ConfigDefGrossLocation::Other,
+            _ => panic!("This arm can never be reached as all cases are covered")
+        };
+
         ConfigurationDefaultInfo {
             sequence: response.bitand(0xF) as u8,
             default_association: (response >> 4).bitand(0xF) as u8,
-            misc: (response >> 8).bitand(0xF) as u8,
-            color: (response >> 12).bitand(0xF) as u8,
-            connection_type: (response >> 16).bitand(0xF) as u8,
-            default_device: (response >> 20).bitand(0xF) as u8,
-            location: (response >> 24).bitand(0b0011_1111) as u8,
-            port_connectivity: (response >> 30).bitand(0b0011) as u8,
+            jack_detect_override: get_bit(response, 8),
+            color: match (response >> 12).bitand(0xF) {
+                0x0 => ConfigDefColor::Unknown,
+                0x1 => ConfigDefColor::Black,
+                0x2 => ConfigDefColor::Grey,
+                0x3 => ConfigDefColor::Blue,
+                0x4 => ConfigDefColor::Green,
+                0x5 => ConfigDefColor::Red,
+                0x6 => ConfigDefColor::Orange,
+                0x7 => ConfigDefColor::Yellow,
+                0x8 => ConfigDefColor::Purple,
+                0x9 => ConfigDefColor::Pink,
+                // 0xA to 0xE are reserved
+                0xE => ConfigDefColor::White,
+                0xF => ConfigDefColor::Other,
+                _ => panic!("Unsupported type of Color")
+            },
+            connection_type: match (response >> 16).bitand(0xF) {
+                0x0 => ConfigDefConnectionType::Unknown,
+                0x1 => ConfigDefConnectionType::EighthInchStereoMono,
+                0x2 => ConfigDefConnectionType::QuarterInchStereoMono,
+                0x3 => ConfigDefConnectionType::ATAPIInternal,
+                0x4 => ConfigDefConnectionType::RCA,
+                0x5 => ConfigDefConnectionType::Optical,
+                0x6 => ConfigDefConnectionType::OtherDigital,
+                0x7 => ConfigDefConnectionType::OtherAnalog,
+                0x8 => ConfigDefConnectionType::MultichannelAnalogDIN,
+                0x9 => ConfigDefConnectionType::XLRProfessional,
+                0xA => ConfigDefConnectionType::RJ11Modem,
+                0xB => ConfigDefConnectionType::Combination,
+                // 0xC to 0xE are not defined in specification
+                0xF => ConfigDefConnectionType::Other,
+                _ => panic!("Unsupported connection type")
+            },
+            default_device: match (response >> 20).bitand(0xF) {
+                0x0 => ConfigDefDefaultDevice::LineOut,
+                0x1 => ConfigDefDefaultDevice::Speaker,
+                0x2 => ConfigDefDefaultDevice::HPOut,
+                0x3 => ConfigDefDefaultDevice::CD,
+                0x4 => ConfigDefDefaultDevice::SPDIFOut,
+                0x5 => ConfigDefDefaultDevice::DigitalOtherOut,
+                0x6 => ConfigDefDefaultDevice::ModemLineSide,
+                0x7 => ConfigDefDefaultDevice::ModemHandsetSide,
+                0x8 => ConfigDefDefaultDevice::LineIn,
+                0x9 => ConfigDefDefaultDevice::AUX,
+                0xA => ConfigDefDefaultDevice::MicIn,
+                0xB => ConfigDefDefaultDevice::Telephony,
+                0xC => ConfigDefDefaultDevice::SPDIFIn,
+                0xD => ConfigDefDefaultDevice::DigitalOtherIn,
+                // 0xE is reserved
+                0xF => ConfigDefDefaultDevice::Other,
+                _ => panic!("Unsupported Type of Default Device")
+            },
+            geometric_location: match (response >> 24).bitand(0xF) {
+                0x0 => ConfigDefGeometricLocation::NotAvailable,
+                0x1 => ConfigDefGeometricLocation::Rear,
+                0x2 => ConfigDefGeometricLocation::Front,
+                0x3 => ConfigDefGeometricLocation::Left,
+                0x4 => ConfigDefGeometricLocation::Right,
+                0x5 => ConfigDefGeometricLocation::Top,
+                0x6 => ConfigDefGeometricLocation::Bottom,
+                0x7 => match gross_location {
+                    ConfigDefGrossLocation::ExternalOnPrimaryChassis => ConfigDefGeometricLocation::RearPanel,
+                    ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::Riser,
+                    ConfigDefGrossLocation::Other => ConfigDefGeometricLocation::MobileLidInside,
+                     _ => panic!("Unsupported type of geometric location")
+                },
+                0x8 => match gross_location {
+                    ConfigDefGrossLocation::ExternalOnPrimaryChassis => ConfigDefGeometricLocation::DriveBay,
+                    ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::DigitalDisplay,
+                    ConfigDefGrossLocation::Other => ConfigDefGeometricLocation::MobileLidOutside,
+                     _ => panic!("Unsupported type of geometric location")
+                }
+                0x9 => match gross_location {
+                    ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::ATAPI,
+                     _ => panic!("Unsupported type of geometric location")
+                }
+                _ => panic!("Unsupported type of geometric location")
+            },
+            gross_location,
+            port_connectivity: match (response >> 30).bitand(0b11) {
+                0b00 => ConfigDefPortConnectivity::Jack,
+                0b01 => ConfigDefPortConnectivity::NoPhysicalConnection,
+                0b10 => ConfigDefPortConnectivity::InternalDevice,
+                0b11 => ConfigDefPortConnectivity::JackAndInternalDevice,
+                _ => panic!("This arm can never be reached as all cases are covered")
+            },
         }
     }
 }
@@ -1168,6 +1258,93 @@ impl TryFrom<Info> for ConfigurationDefaultInfo {
             e => Err(e),
         }
     }
+}
+
+#[derive(Debug)]
+pub enum ConfigDefPortConnectivity {
+    Jack,
+    NoPhysicalConnection,
+    InternalDevice,
+    JackAndInternalDevice,
+}
+
+#[derive(Debug)]
+pub enum ConfigDefGrossLocation {
+    ExternalOnPrimaryChassis,
+    Internal,
+    SeparateChassis,
+    Other,
+}
+
+#[derive(Debug)]
+pub enum ConfigDefGeometricLocation {
+    NotAvailable,
+    Rear,
+    Front,
+    Left,
+    Right,
+    Top,
+    Bottom,
+    RearPanel,
+    Riser,
+    MobileLidInside,
+    DriveBay,
+    DigitalDisplay,
+    MobileLidOutside,
+    ATAPI,
+    //Specials of table 110 in section 7.3.3.31 not implemented
+}
+
+#[derive(Debug)]
+pub enum ConfigDefDefaultDevice {
+    LineOut,
+    Speaker,
+    HPOut,
+    CD,
+    SPDIFOut,
+    DigitalOtherOut,
+    ModemLineSide,
+    ModemHandsetSide,
+    LineIn,
+    AUX,
+    MicIn,
+    Telephony,
+    SPDIFIn,
+    DigitalOtherIn,
+    Other,
+}
+
+#[derive(Debug)]
+pub enum ConfigDefConnectionType {
+    Unknown,
+    EighthInchStereoMono,
+    QuarterInchStereoMono,
+    ATAPIInternal,
+    RCA,
+    Optical,
+    OtherDigital,
+    OtherAnalog,
+    MultichannelAnalogDIN,
+    XLRProfessional,
+    RJ11Modem,
+    Combination,
+    Other,
+}
+
+#[derive(Debug)]
+pub enum ConfigDefColor {
+    Unknown,
+    Black,
+    Grey,
+    Blue,
+    Green,
+    Red,
+    Orange,
+    Yellow,
+    Purple,
+    Pink,
+    White,
+    Other
 }
 
 fn get_bit<T: LowerHex + PrimInt>(input: T, index: usize) -> bool {

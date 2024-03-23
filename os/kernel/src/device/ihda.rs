@@ -11,8 +11,8 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RegisterInterface, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
-use crate::device::ihda_types::Command::GetParameter;
+use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, ConfigurationDefaultInfo, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RegisterInterface, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
+use crate::device::ihda_types::Command::{GetConfigurationDefault, GetParameter};
 use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -58,24 +58,30 @@ impl IHDA {
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&register_interface);
 
-        debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
-        debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
-        debug!("AFG Audio Function Group Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().audio_function_group_caps());
-        debug!("AFG Sample Size, Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
-        debug!("AFG Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
-        debug!("AFG Input Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().input_amp_caps());
-        debug!("AFG Output Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().output_amp_caps());
-        debug!("AFG Supported Power States: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().supported_power_states());
-        debug!("AFG Supported GPIO Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().gpio_count());
+        // debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
+        // debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
+        // debug!("AFG Audio Function Group Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().audio_function_group_caps());
+        // debug!("AFG Sample Size, Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
+        // debug!("AFG Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
+        // debug!("AFG Input Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().input_amp_caps());
+        // debug!("AFG Output Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().output_amp_caps());
+        // debug!("AFG Supported Power States: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().supported_power_states());
+        // debug!("AFG Supported GPIO Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().gpio_count());
 
         // wait a bit to have tim to read each print
-        Timer::wait(30000);
 
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
-            debug!("WIDGET FOUND: {:?}", widget);
+
+            match widget.audio_widget_capabilities().widget_type() {
+                WidgetType::PinComplex => {
+                    let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
+                    debug!("CONFIG DEFAULT for pin widget with address {:?}: {:?}", widget.address(), config_defaults);
+                }
+                _ => {}
+            }
+
             // wait a bit to have tim to read each print
-            Timer::wait(30000);
         }
 
         // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
