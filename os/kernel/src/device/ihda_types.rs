@@ -202,10 +202,10 @@ impl RegisterInterface {
         }
     }
 
-    pub fn get_parameter(&self, addr: &NodeAddress, parameter: &Parameter) -> Info {
-        let command = CommandBuilder::get_parameter(&addr, parameter);
-        let response = self.crs.immediate_command(command);
-        ResponseParser::get_parameter(response, parameter)
+    pub fn send_command(&self, addr: &NodeAddress, command: &Command) -> Info {
+        let parsed_command = CommandBuilder::build_command(&addr, command);
+        let response = self.crs.immediate_command(parsed_command);
+        ResponseParser::parse_response(response, command)
     }
 }
 
@@ -394,17 +394,14 @@ pub enum WidgetInfo {
 pub struct CommandBuilder;
 
 impl CommandBuilder {
-    pub fn get_parameter(node_address: &NodeAddress, parameter: &Parameter) -> u32 {
-        Self::command_with_12bit_identifier_verb(node_address, 0xF00, parameter.id())
-    }
-
-    // two example commands (temporarily unused)
-    pub fn get_connection_select(node_address: &NodeAddress) -> u32 {
-        Self::command_with_12bit_identifier_verb(node_address, 0xF01, 0x0)
-    }
-
-    pub fn set_connection_select(node_address: &NodeAddress, connection_index_value: u8) -> u32 {
-        Self::command_with_12bit_identifier_verb(node_address, 0x701, connection_index_value)
+    pub fn build_command(node_address: &NodeAddress, command: &Command) -> u32 {
+        match command {
+            Command::GetParameter(parameter) => Self::command_with_12bit_identifier_verb(node_address, command.id(), parameter.id()),
+            Command::GetConnectionSelect => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetConnectionSelect { connection_index } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *connection_index),
+            Command::GetConnectionListEntry { offset } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *offset),
+            Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+        }
     }
 
     fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
@@ -412,6 +409,28 @@ impl CommandBuilder {
             | (node_address.node_id as u32) << 20
             | (verb_id as u32) << 8
             | payload as u32
+    }
+}
+
+#[derive(Debug)]
+pub enum Command {
+    GetParameter(Parameter),
+    GetConnectionSelect,
+    SetConnectionSelect { connection_index: u8 },
+    GetConnectionListEntry { offset: u8 },
+    GetConfigurationDefault,
+}
+
+impl Command {
+    pub fn id(&self) -> u16 {
+        match self {
+            Command::GetParameter(_) => 0xF00,
+            Command::GetConnectionSelect => 0xF01,
+            Command::SetConnectionSelect { connection_index: _ } => 0x701,
+            Command::GetConnectionListEntry { offset: _ } => 0xF02,
+            Command::GetConfigurationDefault => 0xF1C,
+
+        }
     }
 }
 
@@ -462,25 +481,34 @@ impl Parameter {
 pub struct ResponseParser;
 
 impl ResponseParser {
-    pub fn get_parameter(response: u32, parameter: &Parameter) -> Info {
-        match parameter {
-            Parameter::VendorId => Info::VendorId(VendorIdInfo::new(response)),
-            Parameter::RevisionId => Info::RevisionId(RevisionIdInfo::new(response)),
-            Parameter::SubordinateNodeCount => Info::SubordinateNodeCount(SubordinateNodeCountInfo::new(response)),
-            Parameter::FunctionGroupType => Info::FunctionGroupType(FunctionGroupTypeInfo::new(response)),
-            Parameter::AudioFunctionGroupCapabilities => Info::AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo::new(response)),
-            Parameter::AudioWidgetCapabilities => Info::AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo::new(response)),
-            Parameter::SampleSizeRateCAPs => Info::SampleSizeRateCAPs(SampleSizeRateCAPsInfo::new(response)),
-            Parameter::StreamFormats => Info::StreamFormats(StreamFormatsInfo::new(response)),
-            Parameter::PinCapabilities => Info::PinCapabilities(PinCapabilitiesInfo::new(response)),
-            Parameter::InputAmpCapabilities => Info::InputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
-            Parameter::OutputAmpCapabilities => Info::OutputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
-            Parameter::ConnectionListLength => Info::ConnectionListLength(ConnectionListLengthInfo::new(response)),
-            Parameter::SupportedPowerStates => Info::SupportedPowerStates(SupportedPowerStatesInfo::new(response)),
-            Parameter::ProcessingCapabilities => Info::ProcessingCapabilities(ProcessingCapabilitiesInfo::new(response)),
-            Parameter::GPIOCount => Info::GPIOCount(GPIOCountInfo::new(response)),
-            Parameter::VolumeKnobCapabilities => Info::VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo::new(response)),
+    pub fn parse_response(response: u32, command: &Command) -> Info {
+        match command {
+            Command::GetParameter(parameter) => {
+                match parameter {
+                    Parameter::VendorId => Info::VendorId(VendorIdInfo::new(response)),
+                    Parameter::RevisionId => Info::RevisionId(RevisionIdInfo::new(response)),
+                    Parameter::SubordinateNodeCount => Info::SubordinateNodeCount(SubordinateNodeCountInfo::new(response)),
+                    Parameter::FunctionGroupType => Info::FunctionGroupType(FunctionGroupTypeInfo::new(response)),
+                    Parameter::AudioFunctionGroupCapabilities => Info::AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo::new(response)),
+                    Parameter::AudioWidgetCapabilities => Info::AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo::new(response)),
+                    Parameter::SampleSizeRateCAPs => Info::SampleSizeRateCAPs(SampleSizeRateCAPsInfo::new(response)),
+                    Parameter::StreamFormats => Info::StreamFormats(StreamFormatsInfo::new(response)),
+                    Parameter::PinCapabilities => Info::PinCapabilities(PinCapabilitiesInfo::new(response)),
+                    Parameter::InputAmpCapabilities => Info::InputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
+                    Parameter::OutputAmpCapabilities => Info::OutputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
+                    Parameter::ConnectionListLength => Info::ConnectionListLength(ConnectionListLengthInfo::new(response)),
+                    Parameter::SupportedPowerStates => Info::SupportedPowerStates(SupportedPowerStatesInfo::new(response)),
+                    Parameter::ProcessingCapabilities => Info::ProcessingCapabilities(ProcessingCapabilitiesInfo::new(response)),
+                    Parameter::GPIOCount => Info::GPIOCount(GPIOCountInfo::new(response)),
+                    Parameter::VolumeKnobCapabilities => Info::VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo::new(response)),
+                }
+            }
+            Command::GetConnectionSelect => Info::ConnectionSelect(ConnectionSelectInfo::new(response)),
+            Command::SetConnectionSelect { .. } => Info::SetInfo,
+            Command::GetConnectionListEntry { .. } => Info::ConnectionListEntry(ConnectionListEntryInfo::new(response)),
+            Command::GetConfigurationDefault => Info::ConfigurationDefault(ConfigurationDefaultInfo::new(response)),
         }
+
     }
 }
 
@@ -502,6 +530,12 @@ pub enum Info {
     ProcessingCapabilities(ProcessingCapabilitiesInfo),
     GPIOCount(GPIOCountInfo),
     VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo),
+
+    ConnectionSelect(ConnectionSelectInfo),
+    ConnectionListEntry(ConnectionListEntryInfo),
+    ConfigurationDefault(ConfigurationDefaultInfo),
+
+    SetInfo,
 }
 
 #[derive(Debug, Getters)]
@@ -1037,6 +1071,100 @@ impl TryFrom<Info> for VolumeKnobCapabilitiesInfo {
     fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
         match info_wrapped {
             Info::VolumeKnobCapabilities(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct ConnectionSelectInfo {
+    currently_set_connection_index: u8,
+}
+
+impl ConnectionSelectInfo {
+    fn new(response: u32) -> Self {
+        ConnectionSelectInfo {
+            currently_set_connection_index: response.bitand(0xFF) as u8,
+        }
+    }
+}
+
+impl TryFrom<Info> for ConnectionSelectInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ConnectionSelect(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+
+// temporarily only short form implemented (see section 7.3.3.3 of the specification)
+#[derive(Debug, Getters)]
+pub struct ConnectionListEntryInfo {
+    connection_list_entry_at_offset_index: u8,
+    connection_list_entry_at_offset_index_plus_one: u8,
+    connection_list_entry_at_offset_index_plus_two: u8,
+    connection_list_entry_at_offset_index_plus_three: u8,
+}
+
+impl ConnectionListEntryInfo {
+    fn new(response: u32) -> Self {
+        ConnectionListEntryInfo {
+            connection_list_entry_at_offset_index: response.bitand(0xFF) as u8,
+            connection_list_entry_at_offset_index_plus_one: (response >> 8).bitand(0xFF) as u8,
+            connection_list_entry_at_offset_index_plus_two: (response >> 16).bitand(0xFF) as u8,
+            connection_list_entry_at_offset_index_plus_three: (response >> 24).bitand(0xFF) as u8,
+        }
+    }
+}
+
+impl TryFrom<Info> for ConnectionListEntryInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ConnectionListEntry(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct ConfigurationDefaultInfo {
+    sequence: u8,
+    default_association: u8,
+    misc: u8,
+    color: u8,
+    connection_type: u8,
+    default_device: u8,
+    location: u8,
+    port_connectivity: u8,
+}
+
+impl ConfigurationDefaultInfo {
+    fn new(response: u32) -> Self {
+        ConfigurationDefaultInfo {
+            sequence: response.bitand(0xF) as u8,
+            default_association: (response >> 4).bitand(0xF) as u8,
+            misc: (response >> 8).bitand(0xF) as u8,
+            color: (response >> 12).bitand(0xF) as u8,
+            connection_type: (response >> 16).bitand(0xF) as u8,
+            default_device: (response >> 20).bitand(0xF) as u8,
+            location: (response >> 24).bitand(0b0011_1111) as u8,
+            port_connectivity: (response >> 30).bitand(0b0011) as u8,
+        }
+    }
+}
+
+impl TryFrom<Info> for ConfigurationDefaultInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ConfigurationDefault(info) => Ok(info),
             e => Err(e),
         }
     }
