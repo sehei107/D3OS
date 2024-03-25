@@ -109,7 +109,7 @@ pub struct ControllerRegisterSet {
 }
 
 impl ControllerRegisterSet {
-    pub fn new(mmio_base_address: u32) -> Self {
+    pub fn new(mmio_base_address: u64) -> Self {
         Self {
             gcap: Register::new(mmio_base_address as *mut u16, "GCAP"),
             vmin: Register::new((mmio_base_address + 0x2) as *mut u8, "VMIN"),
@@ -196,7 +196,7 @@ pub struct RegisterInterface {
 }
 
 impl RegisterInterface {
-    pub fn new(mmio_base_address: u32) -> Self {
+    pub fn new(mmio_base_address: u64) -> Self {
         RegisterInterface {
             crs: ControllerRegisterSet::new(mmio_base_address),
         }

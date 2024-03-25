@@ -57,6 +57,7 @@ impl IHDA {
 
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&register_interface);
+        debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
         // debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
         // debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
@@ -70,18 +71,21 @@ impl IHDA {
 
         // wait a bit to have tim to read each print
 
+        debug!("VENDOR ID: {:?}", codecs.get(0).unwrap().root_node().vendor_id());
+        debug!("REVISION ID: {:?}", codecs.get(0).unwrap().root_node().revision_id());
+
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
+            debug!("{:?} found", widget.audio_widget_capabilities().widget_type());
 
-            match widget.audio_widget_capabilities().widget_type() {
-                WidgetType::PinComplex => {
-                    let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
-                    debug!("CONFIG DEFAULT for pin widget with address {:?}: {:?}", widget.address(), config_defaults);
-                }
-                _ => {}
-            }
-
-            // wait a bit to have tim to read each print
+            // match widget.audio_widget_capabilities().widget_type() {
+            //     WidgetType::PinComplex => {
+            //         let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
+            //         debug!("CONFIG DEFAULT for pin widget with address {:?}: {:?}", widget.address(), config_defaults);
+            //         Timer::wait(10000);
+            //     }
+            //     _ => {}
+            // }
         }
 
         // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
@@ -95,43 +99,65 @@ impl IHDA {
 
         // find ihda devices
         let ihda_devices = pci.search_by_class(PCI_MULTIMEDIA_DEVICE, PCI_IHDA_DEVICE);
+        debug!("[{}] IHDA device{} found", ihda_devices.len(), if ihda_devices.len() == 1 { "" } else { "s" });
+
 
         if ihda_devices.len() > 0 {
-            // first found ihda device gets picked for initialisation under the assumption that there is exactly one ihda sound card available
-            let device = ihda_devices[0];
+            let device;
+            // temporarily hard coded
+            if ihda_devices.len() == 1 {
+                // QEMU setup
+                device = ihda_devices[0];
+            } else {
+                // university testing device setup
+                device = ihda_devices[1];
+            }
+
             let bar0 = device.bar(0, pci.config_space()).unwrap();
+
+            let mmio_base_address: u64;
+            let mmio_size: u64;
 
             match bar0 {
                 Bar::Memory32 { address, size, .. } => {
-                    // set BME bit in command register of PCI configuration space
-                    device.update_command(pci.config_space(), |command| {
-                        command.bitor(CommandRegister::BUS_MASTER_ENABLE)
-                    });
-
-                    // set Memory Space bit in command register of PCI configuration space (so that hardware can respond to memory space access)
-                    device.update_command(pci.config_space(), |command| {
-                        command.bitor(CommandRegister::MEMORY_ENABLE)
-                    });
-
-                    // setup MMIO space (currently one-to-one mapping from physical address space to virtual address space of kernel)
-                    let pages = size as usize / PAGE_SIZE;
-                    let mmio_page = Page::from_start_address(VirtAddr::new(address as u64)).expect("IHDA MMIO address is not page aligned!");
-                    let address_space = process_manager().read().kernel_process().unwrap().address_space();
-                    address_space.map(PageRange { start: mmio_page, end: mmio_page + pages as u64 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
-
-                    // setup interrupt line
-                    const CPU_EXCEPTION_OFFSET: u8 = 32;
-                    let (_, interrupt_line) = device.interrupt(pci.config_space());
-                    let interrupt_vector = InterruptVector::try_from(CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
-                    interrupt_dispatcher().assign(interrupt_vector, Box::new(IHDAInterruptHandler::default()));
-                    apic().allow(interrupt_vector);
-                    // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
-                    // will now result in a call of IHDAInterruptHandler's "trigger"-function.
-
-                    return RegisterInterface::new(address);
-                },
-                _ => { panic!("Invalid BAR! IHDA always uses Memory32") },
+                    mmio_base_address = address as u64;
+                    mmio_size = size as u64;
+                }
+                Bar::Memory64 { address, size, prefetchable: _ } => {
+                    mmio_base_address = address;
+                    mmio_size = size;
+                }
+                Bar::Io { .. } => {
+                    panic!("Driver doesn't support port i/o! ")
+                }
             }
+
+            // set BME bit in command register of PCI configuration space
+            device.update_command(pci.config_space(), |command| {
+                command.bitor(CommandRegister::BUS_MASTER_ENABLE)
+            });
+
+            // set Memory Space bit in command register of PCI configuration space (so that hardware can respond to memory space access)
+            device.update_command(pci.config_space(), |command| {
+                command.bitor(CommandRegister::MEMORY_ENABLE)
+            });
+
+            // setup MMIO space (currently one-to-one mapping from physical address space to virtual address space of kernel)
+            let pages = mmio_size as usize / PAGE_SIZE;
+            let mmio_page = Page::from_start_address(VirtAddr::new(mmio_base_address)).expect("IHDA MMIO address is not page aligned!");
+            let address_space = process_manager().read().kernel_process().unwrap().address_space();
+            address_space.map(PageRange { start: mmio_page, end: mmio_page + pages as u64 }, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
+
+            // setup interrupt line
+            const CPU_EXCEPTION_OFFSET: u8 = 32;
+            let (_, interrupt_line) = device.interrupt(pci.config_space());
+            let interrupt_vector = InterruptVector::try_from(CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
+            interrupt_dispatcher().assign(interrupt_vector, Box::new(IHDAInterruptHandler::default()));
+            apic().allow(interrupt_vector);
+            // A fake interrupt via the call of "unsafe { asm!("int 43"); }" from the crate core::arch::asm
+            // will now result in a call of IHDAInterruptHandler's "trigger"-function.
+
+            return RegisterInterface::new(mmio_base_address);
         }
         panic!("No IHDA device found!");
     }
