@@ -1170,10 +1170,12 @@ impl ConfigurationDefaultInfo {
                 0x7 => ConfigDefColor::Yellow,
                 0x8 => ConfigDefColor::Purple,
                 0x9 => ConfigDefColor::Pink,
-                // 0xA to 0xE are reserved
+                // 0xA to 0xD are reserved
                 0xE => ConfigDefColor::White,
                 0xF => ConfigDefColor::Other,
-                _ => panic!("Unsupported type of Color")
+
+                // I first threw a panic here but the pyhsical sound card in my testing device returned the reserved value 0xC...
+                _ => ConfigDefColor::Unknown,
             },
             connection_type: match (response >> 16).bitand(0xF) {
                 0x0 => ConfigDefConnectionType::Unknown,
