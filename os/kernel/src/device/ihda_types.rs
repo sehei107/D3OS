@@ -401,6 +401,8 @@ impl CommandBuilder {
             Command::SetConnectionSelect { connection_index } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *connection_index),
             Command::GetConnectionListEntry { offset } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *offset),
             Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::GetPinWidgetControl => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetPinWidgetControl { pin_control } => Self::command_with_12bit_identifier_verb(node_address, command.id(), pin_control.as_u8()),
         }
     }
 
@@ -419,6 +421,8 @@ pub enum Command {
     SetConnectionSelect { connection_index: u8 },
     GetConnectionListEntry { offset: u8 },
     GetConfigurationDefault,
+    GetPinWidgetControl,
+    SetPinWidgetControl { pin_control: PinWidgetControlInfo },
 }
 
 impl Command {
@@ -429,7 +433,8 @@ impl Command {
             Command::SetConnectionSelect { connection_index: _ } => 0x701,
             Command::GetConnectionListEntry { offset: _ } => 0xF02,
             Command::GetConfigurationDefault => 0xF1C,
-
+            Command::GetPinWidgetControl => 0xF07,
+            Command::SetPinWidgetControl { pin_control: _ } => 0x707,
         }
     }
 }
@@ -507,6 +512,8 @@ impl ResponseParser {
             Command::SetConnectionSelect { .. } => Info::SetInfo,
             Command::GetConnectionListEntry { .. } => Info::ConnectionListEntry(ConnectionListEntryInfo::new(response)),
             Command::GetConfigurationDefault => Info::ConfigurationDefault(ConfigurationDefaultInfo::new(response)),
+            Command::GetPinWidgetControl => Info::PinWidgetControl(PinWidgetControlInfo::new(response)),
+            Command::SetPinWidgetControl { .. } => Info::SetInfo,
         }
 
     }
@@ -533,6 +540,9 @@ pub enum Info {
 
     ConnectionSelect(ConnectionSelectInfo),
     ConnectionListEntry(ConnectionListEntryInfo),
+
+    PinWidgetControl(PinWidgetControlInfo),
+
     ConfigurationDefault(ConfigurationDefaultInfo),
 
     SetInfo,
@@ -1347,6 +1357,68 @@ pub enum ConfigDefColor {
     Pink,
     White,
     Other
+}
+
+#[derive(Debug, Getters)]
+pub struct PinWidgetControlInfo {
+    // Voltage Reference Enable applies only to non-digital pin widgets (see section 7.3.3.13 of the specification)
+    // for digital pin widgets (e.g. HDMI and Display Port), the same bits represent Encoded Packet Type instead
+    // but a case distinction is not implemented yet so this code will fail for digital pin widgets
+    voltage_reference_enable: VoltageReferenceSignalLevel,
+    in_enable: bool,
+    out_enable: bool,
+    h_phn_enable: bool,
+}
+
+impl PinWidgetControlInfo {
+    fn new(response: u32) -> Self {
+        PinWidgetControlInfo {
+            voltage_reference_enable: match response.bitand(0b111) {
+                0b000 => VoltageReferenceSignalLevel::HiZ,
+                0b001 => VoltageReferenceSignalLevel::FiftyPercent,
+                0b010 => VoltageReferenceSignalLevel::Ground0V,
+                // 0b010 reserved
+                0b100 => VoltageReferenceSignalLevel::EightyPercent,
+                0b101 => VoltageReferenceSignalLevel::HundredPercent,
+                // 0b110 and 0b111 reserved
+                _ => panic!("Unsupported type of voltage reference signal level")
+            },
+            in_enable: get_bit(response, 5),
+            out_enable: get_bit(response, 6),
+            h_phn_enable: get_bit(response, 7),
+        }
+    }
+
+    fn as_u8(&self) -> u8 {
+        let voltage_reference_enable = match self.voltage_reference_enable {
+            VoltageReferenceSignalLevel::HiZ => 0b000,
+            VoltageReferenceSignalLevel::FiftyPercent => 0b001,
+            VoltageReferenceSignalLevel::Ground0V => 0b010,
+            VoltageReferenceSignalLevel::EightyPercent => 0b100,
+            VoltageReferenceSignalLevel::HundredPercent => 0b101,
+        };
+        (self.h_phn_enable as u8) << 7 | (self.out_enable as u8) << 6 | (self.in_enable as u8) << 5 | voltage_reference_enable
+    }
+}
+
+impl TryFrom<Info> for PinWidgetControlInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::PinWidgetControl(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum VoltageReferenceSignalLevel {
+    HiZ,
+    FiftyPercent,
+    Ground0V,
+    EightyPercent,
+    HundredPercent,
 }
 
 fn get_bit<T: LowerHex + PrimInt>(input: T, index: usize) -> bool {
