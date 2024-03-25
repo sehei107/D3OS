@@ -284,7 +284,7 @@ pub struct FunctionGroupNode {
     function_group_type: FunctionGroupTypeInfo,
     audio_function_group_caps: AudioFunctionGroupCapabilitiesInfo,
     sample_size_rate_caps: SampleSizeRateCAPsInfo,
-    stream_formats: StreamFormatsInfo,
+    supported_stream_formats: SupportedStreamFormatsInfo,
     input_amp_caps: AmpCapabilitiesInfo,
     output_amp_caps: AmpCapabilitiesInfo,
     // function group node must provide a SupportedPowerStatesInfo, but QEMU doesn't do it... so this only an Option<SupportedPowerStatesInfo> for now
@@ -306,7 +306,7 @@ impl FunctionGroupNode {
         function_group_type: FunctionGroupTypeInfo,
         audio_function_group_caps: AudioFunctionGroupCapabilitiesInfo,
         sample_size_rate_caps: SampleSizeRateCAPsInfo,
-        stream_formats: StreamFormatsInfo,
+        supported_stream_formats: SupportedStreamFormatsInfo,
         input_amp_caps: AmpCapabilitiesInfo,
         output_amp_caps: AmpCapabilitiesInfo,
         supported_power_states: SupportedPowerStatesInfo,
@@ -319,7 +319,7 @@ impl FunctionGroupNode {
             function_group_type,
             audio_function_group_caps,
             sample_size_rate_caps,
-            stream_formats,
+            supported_stream_formats,
             input_amp_caps,
             output_amp_caps,
             supported_power_states,
@@ -333,7 +333,7 @@ impl FunctionGroupNode {
 pub struct WidgetNode {
     address: NodeAddress,
     audio_widget_capabilities: AudioWidgetCapabilitiesInfo,
-    widget_info: WidgetInfo,
+    widget_info: WidgetInfoContainer,
 }
 
 impl Node for WidgetNode {
@@ -343,7 +343,7 @@ impl Node for WidgetNode {
 }
 
 impl WidgetNode {
-    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesInfo, widget_info: WidgetInfo) -> Self {
+    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesInfo, widget_info: WidgetInfoContainer) -> Self {
         WidgetNode {
             address,
             audio_widget_capabilities,
@@ -358,17 +358,17 @@ impl WidgetNode {
 }
 
 #[derive(Debug)]
-pub enum WidgetInfo {
+pub enum WidgetInfoContainer {
     AudioOutputConverter(
         SampleSizeRateCAPsInfo,
-        StreamFormatsInfo,
+        SupportedStreamFormatsInfo,
         AmpCapabilitiesInfo,
         SupportedPowerStatesInfo,
         ProcessingCapabilitiesInfo,
     ),
     AudioInputConverter(
         SampleSizeRateCAPsInfo,
-        StreamFormatsInfo,
+        SupportedStreamFormatsInfo,
         AmpCapabilitiesInfo,
         ConnectionListLengthInfo,
         SupportedPowerStatesInfo,
@@ -400,9 +400,13 @@ impl CommandBuilder {
             Command::GetConnectionSelect => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
             Command::SetConnectionSelect { connection_index } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *connection_index),
             Command::GetConnectionListEntry { offset } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *offset),
-            Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::GetStreamFormat => Self::command_with_4bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetStreamFormat(stream_format) => Self::command_with_4bit_identifier_verb(node_address, command.id(), stream_format.as_u16()),
+            Command::GetChannelStreamId => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetChannelStreamId(channel_stream_id) => Self::command_with_12bit_identifier_verb(node_address, command.id(), channel_stream_id.as_u8()),
             Command::GetPinWidgetControl => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetPinWidgetControl { pin_control } => Self::command_with_12bit_identifier_verb(node_address, command.id(), pin_control.as_u8()),
+            Command::SetPinWidgetControl(pin_control) => Self::command_with_12bit_identifier_verb(node_address, command.id(), pin_control.as_u8()),
+            Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
         }
     }
 
@@ -410,6 +414,13 @@ impl CommandBuilder {
         (node_address.codec_address as u32) << 28
             | (node_address.node_id as u32) << 20
             | (verb_id as u32) << 8
+            | payload as u32
+    }
+
+    fn command_with_4bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u16) -> u32 {
+        (node_address.codec_address as u32) << 28
+            | (node_address.node_id as u32) << 20
+            | (verb_id as u32) << 16
             | payload as u32
     }
 }
@@ -420,9 +431,13 @@ pub enum Command {
     GetConnectionSelect,
     SetConnectionSelect { connection_index: u8 },
     GetConnectionListEntry { offset: u8 },
-    GetConfigurationDefault,
+    GetStreamFormat,
+    SetStreamFormat(StreamFormatInfo),
+    GetChannelStreamId,
+    SetChannelStreamId(ChannelStreamIdInfo),
     GetPinWidgetControl,
-    SetPinWidgetControl { pin_control: PinWidgetControlInfo },
+    SetPinWidgetControl(PinWidgetControlInfo),
+    GetConfigurationDefault,
 }
 
 impl Command {
@@ -432,9 +447,13 @@ impl Command {
             Command::GetConnectionSelect => 0xF01,
             Command::SetConnectionSelect { connection_index: _ } => 0x701,
             Command::GetConnectionListEntry { offset: _ } => 0xF02,
-            Command::GetConfigurationDefault => 0xF1C,
+            Command::GetStreamFormat => 0xA,
+            Command::SetStreamFormat(_) => 0x2,
+            Command::GetChannelStreamId => 0xF06,
+            Command::SetChannelStreamId(_) => 0x706,
             Command::GetPinWidgetControl => 0xF07,
-            Command::SetPinWidgetControl { pin_control: _ } => 0x707,
+            Command::SetPinWidgetControl(_) => 0x707,
+            Command::GetConfigurationDefault => 0xF1C,
         }
     }
 }
@@ -449,7 +468,7 @@ pub enum Parameter {
     AudioFunctionGroupCapabilities,
     AudioWidgetCapabilities,
     SampleSizeRateCAPs,
-    StreamFormats,
+    SupportedStreamFormats,
     PinCapabilities,
     InputAmpCapabilities,
     OutputAmpCapabilities,
@@ -470,7 +489,7 @@ impl Parameter {
             Parameter::AudioFunctionGroupCapabilities => 0x08,
             Parameter::AudioWidgetCapabilities => 0x09,
             Parameter::SampleSizeRateCAPs => 0x0A,
-            Parameter::StreamFormats => 0x0B,
+            Parameter::SupportedStreamFormats => 0x0B,
             Parameter::PinCapabilities => 0x0C,
             Parameter::InputAmpCapabilities => 0x0D,
             Parameter::OutputAmpCapabilities => 0x12,
@@ -497,7 +516,7 @@ impl ResponseParser {
                     Parameter::AudioFunctionGroupCapabilities => Info::AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo::new(response)),
                     Parameter::AudioWidgetCapabilities => Info::AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo::new(response)),
                     Parameter::SampleSizeRateCAPs => Info::SampleSizeRateCAPs(SampleSizeRateCAPsInfo::new(response)),
-                    Parameter::StreamFormats => Info::StreamFormats(StreamFormatsInfo::new(response)),
+                    Parameter::SupportedStreamFormats => Info::SupportedStreamFormats(SupportedStreamFormatsInfo::new(response)),
                     Parameter::PinCapabilities => Info::PinCapabilities(PinCapabilitiesInfo::new(response)),
                     Parameter::InputAmpCapabilities => Info::InputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
                     Parameter::OutputAmpCapabilities => Info::OutputAmpCapabilities(AmpCapabilitiesInfo::new(response)),
@@ -511,6 +530,10 @@ impl ResponseParser {
             Command::GetConnectionSelect => Info::ConnectionSelect(ConnectionSelectInfo::new(response)),
             Command::SetConnectionSelect { .. } => Info::SetInfo,
             Command::GetConnectionListEntry { .. } => Info::ConnectionListEntry(ConnectionListEntryInfo::new(response)),
+            Command::GetStreamFormat { .. } => Info::StreamFormat(StreamFormatInfo::new(response)),
+            Command::SetStreamFormat { .. } => Info::SetInfo,
+            Command::GetChannelStreamId => Info::ChannelStreamId(ChannelStreamIdInfo::new(response)),
+            Command::SetChannelStreamId(_) => Info::SetInfo,
             Command::GetConfigurationDefault => Info::ConfigurationDefault(ConfigurationDefaultInfo::new(response)),
             Command::GetPinWidgetControl => Info::PinWidgetControl(PinWidgetControlInfo::new(response)),
             Command::SetPinWidgetControl { .. } => Info::SetInfo,
@@ -528,7 +551,7 @@ pub enum Info {
     AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo),
     AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo),
     SampleSizeRateCAPs(SampleSizeRateCAPsInfo),
-    StreamFormats(StreamFormatsInfo),
+    SupportedStreamFormats(SupportedStreamFormatsInfo),
     PinCapabilities(PinCapabilitiesInfo),
     InputAmpCapabilities(AmpCapabilitiesInfo),
     OutputAmpCapabilities(AmpCapabilitiesInfo),
@@ -540,6 +563,10 @@ pub enum Info {
 
     ConnectionSelect(ConnectionSelectInfo),
     ConnectionListEntry(ConnectionListEntryInfo),
+
+    ChannelStreamId(ChannelStreamIdInfo),
+
+    StreamFormat(StreamFormatInfo),
 
     PinWidgetControl(PinWidgetControlInfo),
 
@@ -834,15 +861,15 @@ impl TryFrom<Info> for SampleSizeRateCAPsInfo {
 }
 
 #[derive(Debug, Getters)]
-pub struct StreamFormatsInfo {
+pub struct SupportedStreamFormatsInfo {
     pcm: bool,
     float32: bool,
     ac3: bool,
 }
 
-impl StreamFormatsInfo {
+impl SupportedStreamFormatsInfo {
     fn new(response: u32) -> Self {
-        StreamFormatsInfo {
+        SupportedStreamFormatsInfo {
             pcm: get_bit(response, 0),
             float32: get_bit(response, 1),
             ac3: get_bit(response, 2),
@@ -850,12 +877,12 @@ impl StreamFormatsInfo {
     }
 }
 
-impl TryFrom<Info> for StreamFormatsInfo {
+impl TryFrom<Info> for SupportedStreamFormatsInfo {
     type Error = Info;
 
     fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::StreamFormats(info) => Ok(info),
+            Info::SupportedStreamFormats(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -1143,6 +1170,176 @@ impl TryFrom<Info> for ConnectionListEntryInfo {
 }
 
 #[derive(Debug, Getters)]
+pub struct StreamFormatInfo {
+    number_of_channels: u8,
+    bits_per_sample: u8,
+    sample_base_rate_divisor: u8,
+    sample_base_rate_multiple: u8,
+    sample_base_rate: u16,
+    stream_type: StreamType,
+}
+
+impl StreamFormatInfo {
+    fn new(response: u32) -> Self {
+        let sample_base_rate_multiple = (response >> 11).bitand(0b111) as u8 + 1;
+        if sample_base_rate_multiple > 4 {
+            panic!("Unsupported sample rate base multiple, see table 53 in section 3.7.1: Stream Format Structure of the specification");
+        }
+
+        StreamFormatInfo {
+            number_of_channels: (response.bitand(0xF) as u8) + 1,
+            bits_per_sample: match (response >> 4).bitand(0b111) {
+                0b000 => 8,
+                0b001 => 16,
+                0b010 => 20,
+                0b011 => 24,
+                0b100 => 32,
+                // 0b101 to 0b111 reserved
+                _ => panic!("Unsupported bit depth, see table 53 in section 3.7.1: Stream Format Structure of the specification")
+            },
+            sample_base_rate_divisor: (response >> 8).bitand(0b111) as u8 + 1,
+            sample_base_rate_multiple,
+            sample_base_rate: if get_bit(response, 14) { 44100 } else { 48000 },
+            stream_type: if get_bit(response, 15) { StreamType::NonPCM } else { StreamType::PCM },
+        }
+    }
+
+    fn as_u16(&self) -> u16 {
+        let number_of_channels = self.number_of_channels - 1;
+        let bits_per_sample = match self.bits_per_sample {
+            8 => 0b000,
+            16 => 0b001,
+            20 => 0b010,
+            24 => 0b011,
+            32 => 0b100,
+            _ => panic!("This arm should be unreachable as the only constructor of StreamFormatInfo doesn't let you create an instance with invalid values for bit depth")
+        };
+        let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
+        let sample_base_rate_multiple = self.sample_base_rate_multiple - 1;
+        let sample_base_rate = if self.sample_base_rate == 44100 { 1 } else { 0 };
+        let stream_type = match self.stream_type {
+            StreamType::PCM => 0,
+            StreamType::NonPCM => 1,
+        };
+        (stream_type as u16) << 15
+            | (sample_base_rate as u16) << 14
+            | (sample_base_rate_multiple as u16) << 11
+            | (sample_base_rate_divisor as u16) << 8
+            | (bits_per_sample as u16) << 4
+            | number_of_channels as u16
+    }
+}
+
+impl TryFrom<Info> for StreamFormatInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::StreamFormat(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct ChannelStreamIdInfo {
+    channel: u8,
+    stream: u8,
+}
+
+impl ChannelStreamIdInfo {
+    fn new(response: u32) -> Self {
+        ChannelStreamIdInfo {
+            channel: response.bitand(0xF) as u8,
+            stream: (response >> 4).bitand(0xF) as u8,
+        }
+    }
+
+    fn as_u8(&self) -> u8 {
+        (self.stream << 4) | self.channel
+    }
+}
+
+impl TryFrom<Info> for ChannelStreamIdInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::ChannelStreamId(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum StreamType {
+    PCM,
+    NonPCM,
+}
+
+#[derive(Debug, Getters)]
+pub struct PinWidgetControlInfo {
+    // Voltage Reference Enable applies only to non-digital pin widgets (see section 7.3.3.13 of the specification)
+    // for digital pin widgets (e.g. HDMI and Display Port), the same bits represent Encoded Packet Type instead
+    // but a case distinction is not implemented yet so this code will fail for digital pin widgets
+    voltage_reference_enable: VoltageReferenceSignalLevel,
+    in_enable: bool,
+    out_enable: bool,
+    h_phn_enable: bool,
+}
+
+impl PinWidgetControlInfo {
+    fn new(response: u32) -> Self {
+        PinWidgetControlInfo {
+            voltage_reference_enable: match response.bitand(0b111) {
+                0b000 => VoltageReferenceSignalLevel::HiZ,
+                0b001 => VoltageReferenceSignalLevel::FiftyPercent,
+                0b010 => VoltageReferenceSignalLevel::Ground0V,
+                // 0b010 reserved
+                0b100 => VoltageReferenceSignalLevel::EightyPercent,
+                0b101 => VoltageReferenceSignalLevel::HundredPercent,
+                // 0b110 and 0b111 reserved
+                _ => panic!("Unsupported type of voltage reference signal level")
+            },
+            in_enable: get_bit(response, 5),
+            out_enable: get_bit(response, 6),
+            h_phn_enable: get_bit(response, 7),
+        }
+    }
+
+    fn as_u8(&self) -> u8 {
+        let voltage_reference_enable = match self.voltage_reference_enable {
+            VoltageReferenceSignalLevel::HiZ => 0b000,
+            VoltageReferenceSignalLevel::FiftyPercent => 0b001,
+            VoltageReferenceSignalLevel::Ground0V => 0b010,
+            VoltageReferenceSignalLevel::EightyPercent => 0b100,
+            VoltageReferenceSignalLevel::HundredPercent => 0b101,
+        };
+        (self.h_phn_enable as u8) << 7 | (self.out_enable as u8) << 6 | (self.in_enable as u8) << 5 | voltage_reference_enable
+    }
+}
+
+impl TryFrom<Info> for PinWidgetControlInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::PinWidgetControl(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum VoltageReferenceSignalLevel {
+    HiZ,
+    FiftyPercent,
+    Ground0V,
+    EightyPercent,
+    HundredPercent,
+}
+
+#[derive(Debug, Getters)]
 pub struct ConfigurationDefaultInfo {
     sequence: u8,
     default_association: u8,
@@ -1235,17 +1432,17 @@ impl ConfigurationDefaultInfo {
                     ConfigDefGrossLocation::ExternalOnPrimaryChassis => ConfigDefGeometricLocation::RearPanel,
                     ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::Riser,
                     ConfigDefGrossLocation::Other => ConfigDefGeometricLocation::MobileLidInside,
-                     _ => panic!("Unsupported type of geometric location")
+                    _ => panic!("Unsupported type of geometric location")
                 },
                 0x8 => match gross_location {
                     ConfigDefGrossLocation::ExternalOnPrimaryChassis => ConfigDefGeometricLocation::DriveBay,
                     ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::DigitalDisplay,
                     ConfigDefGrossLocation::Other => ConfigDefGeometricLocation::MobileLidOutside,
-                     _ => panic!("Unsupported type of geometric location")
+                    _ => panic!("Unsupported type of geometric location")
                 }
                 0x9 => match gross_location {
                     ConfigDefGrossLocation::Internal => ConfigDefGeometricLocation::ATAPI,
-                     _ => panic!("Unsupported type of geometric location")
+                    _ => panic!("Unsupported type of geometric location")
                 }
                 _ => panic!("Unsupported type of geometric location")
             },
@@ -1357,68 +1554,6 @@ pub enum ConfigDefColor {
     Pink,
     White,
     Other
-}
-
-#[derive(Debug, Getters)]
-pub struct PinWidgetControlInfo {
-    // Voltage Reference Enable applies only to non-digital pin widgets (see section 7.3.3.13 of the specification)
-    // for digital pin widgets (e.g. HDMI and Display Port), the same bits represent Encoded Packet Type instead
-    // but a case distinction is not implemented yet so this code will fail for digital pin widgets
-    voltage_reference_enable: VoltageReferenceSignalLevel,
-    in_enable: bool,
-    out_enable: bool,
-    h_phn_enable: bool,
-}
-
-impl PinWidgetControlInfo {
-    fn new(response: u32) -> Self {
-        PinWidgetControlInfo {
-            voltage_reference_enable: match response.bitand(0b111) {
-                0b000 => VoltageReferenceSignalLevel::HiZ,
-                0b001 => VoltageReferenceSignalLevel::FiftyPercent,
-                0b010 => VoltageReferenceSignalLevel::Ground0V,
-                // 0b010 reserved
-                0b100 => VoltageReferenceSignalLevel::EightyPercent,
-                0b101 => VoltageReferenceSignalLevel::HundredPercent,
-                // 0b110 and 0b111 reserved
-                _ => panic!("Unsupported type of voltage reference signal level")
-            },
-            in_enable: get_bit(response, 5),
-            out_enable: get_bit(response, 6),
-            h_phn_enable: get_bit(response, 7),
-        }
-    }
-
-    fn as_u8(&self) -> u8 {
-        let voltage_reference_enable = match self.voltage_reference_enable {
-            VoltageReferenceSignalLevel::HiZ => 0b000,
-            VoltageReferenceSignalLevel::FiftyPercent => 0b001,
-            VoltageReferenceSignalLevel::Ground0V => 0b010,
-            VoltageReferenceSignalLevel::EightyPercent => 0b100,
-            VoltageReferenceSignalLevel::HundredPercent => 0b101,
-        };
-        (self.h_phn_enable as u8) << 7 | (self.out_enable as u8) << 6 | (self.in_enable as u8) << 5 | voltage_reference_enable
-    }
-}
-
-impl TryFrom<Info> for PinWidgetControlInfo {
-    type Error = Info;
-
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
-        match info_wrapped {
-            Info::PinWidgetControl(info) => Ok(info),
-            e => Err(e),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum VoltageReferenceSignalLevel {
-    HiZ,
-    FiftyPercent,
-    Ground0V,
-    EightyPercent,
-    HundredPercent,
 }
 
 fn get_bit<T: LowerHex + PrimInt>(input: T, index: usize) -> bool {

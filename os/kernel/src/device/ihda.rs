@@ -11,9 +11,9 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, ConfigurationDefaultInfo, ConnectionListLengthInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RegisterInterface, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, StreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfo, WidgetNode, WidgetType};
-use crate::device::ihda_types::Command::{GetConfigurationDefault, GetParameter};
-use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, StreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
+use crate::device::ihda_types::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, Codec, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultInfo, ConnectionListEntryInfo, ConnectionListLengthInfo, ConnectionSelectInfo, ControllerRegisterSet, FunctionGroupNode, FunctionGroupTypeInfo, GPIOCountInfo, NodeAddress, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RegisterInterface, RevisionIdInfo, RootNode, SampleSizeRateCAPsInfo, SupportedStreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetInfoContainer, WidgetNode, WidgetType, Parameter, StreamFormatInfo};
+use crate::device::ihda_types::Command::{GetConfigurationDefault, GetConnectionListEntry, GetConnectionSelect, GetParameter, GetStreamFormat};
+use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SupportedStreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -76,16 +76,61 @@ impl IHDA {
 
         debug!("Find all widgets in first audio function group:");
         for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
-            debug!("{:?} found", widget.audio_widget_capabilities().widget_type());
+            // debug!("{:?} found, id: {:?}, channel count: {:?}", widget.audio_widget_capabilities().widget_type(), widget.address().node_id(), widget.max_number_of_channels());
 
-            // match widget.audio_widget_capabilities().widget_type() {
-            //     WidgetType::PinComplex => {
-            //         let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
-            //         debug!("CONFIG DEFAULT for pin widget with address {:?}: {:?}", widget.address(), config_defaults);
-            //         Timer::wait(10000);
-            //     }
-            //     _ => {}
-            // }
+            match widget.audio_widget_capabilities().widget_type() {
+                WidgetType::AudioOutput => {
+                    debug!("audio output converter widget {:?}:", widget.address());
+                    debug!("channel count {:?}:", widget.max_number_of_channels());
+                    debug!("stream format {:?}:", StreamFormatInfo::try_from(register_interface.send_command(widget.address(), &GetStreamFormat)).unwrap());
+
+                }
+                WidgetType::AudioInput => {}
+                WidgetType::AudioMixer => {
+                    // if (*widget.address().node_id() == 12) | (*widget.address().node_id() == 13) {
+                    //     let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
+                    //
+                    //     debug!("mixer widget {:?}:", widget.address());
+                    //     debug!("channel count {:?}:", widget.max_number_of_channels());
+                    //     debug!("connection list length: {:?}", ConnectionListLengthInfo::try_from(register_interface.send_command(widget.address(), &GetParameter(ConnectionListLength))).unwrap());
+                    //     debug!("first connection list entries: {:?}", ConnectionListEntryInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionListEntry { offset: 0 })).unwrap());
+                    //     debug!("connection select: {:?}", ConnectionSelectInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionSelect)).unwrap());
+                    //
+                    //     debug!("port connectivity: {:?}, default device: {:?}, default association: {:?}, sequence: {:?}",
+                    //             config_defaults.port_connectivity(), config_defaults.default_device(), config_defaults.default_association(), config_defaults.sequence());
+                    // }
+
+                }
+                WidgetType::AudioSelector => {}
+                WidgetType::PinComplex => {
+                    // let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
+                    // match config_defaults.port_connectivity() {
+                    //     ConfigDefPortConnectivity::Jack => {
+                    //         if *widget.address().node_id() == 27 {
+                    //             debug!("pin widget {:?}:", widget.address());
+                    //             debug!("EAPD capable: {:?}", PinCapabilitiesInfo::try_from(register_interface.send_command(widget.address(), &GetParameter(PinCapabilities))).unwrap().eapd_capable());
+                    //             debug!("channel count {:?}:", widget.max_number_of_channels());
+                    //             debug!("connection list length: {:?}:",
+                    //                 match widget.widget_info() {
+                    //                     WidgetInfoContainer::PinComplex(_,_,_,cll,_,_) => { cll },
+                    //                     _ => { panic!() },
+                    //                 });
+                    //             debug!("first connection list entries: {:?}", ConnectionListEntryInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionListEntry { offset: 0 })).unwrap());
+                    //             debug!("connection select: {:?}", ConnectionSelectInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionSelect)).unwrap());
+                    //
+                    //             debug!("port connectivity: {:?}, default device: {:?}, default association: {:?}, sequence: {:?}",
+                    //             config_defaults.port_connectivity(), config_defaults.default_device(), config_defaults.default_association(), config_defaults.sequence());
+                    //         }
+                    //     }
+                    //     _ => {}
+                    // }
+                }
+                WidgetType::PowerWidget => {}
+                WidgetType::VolumeKnobWidget => {}
+                WidgetType::BeepGeneratorWidget => {}
+                WidgetType::VendorDefinedAudioWidget => {}
+            }
+            Timer::wait(2000);
         }
 
         // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
@@ -308,7 +353,7 @@ impl IHDA {
             let function_group_type_info = FunctionGroupTypeInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(FunctionGroupType))).unwrap();
             let afg_caps = AudioFunctionGroupCapabilitiesInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(AudioFunctionGroupCapabilities))).unwrap();
             let sample_size_rate_caps = SampleSizeRateCAPsInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(SampleSizeRateCAPs))).unwrap();
-            let stream_formats = StreamFormatsInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(StreamFormats))).unwrap();
+            let supported_stream_formats = SupportedStreamFormatsInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(SupportedStreamFormats))).unwrap();
             let input_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(InputAmpCapabilities))).unwrap();
             let output_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(OutputAmpCapabilities))).unwrap();
             let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.send_command(&fg_address, &GetParameter(SupportedPowerStates))).unwrap();
@@ -322,7 +367,7 @@ impl IHDA {
                 function_group_type_info,
                 afg_caps,
                 sample_size_rate_caps,
-                stream_formats,
+                supported_stream_formats,
                 input_amp_caps,
                 output_amp_caps,
                 supported_power_states,
@@ -342,34 +387,34 @@ impl IHDA {
 
         for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
             let widget_address = NodeAddress::new(codec_address, node_id);
-            let widget_info: WidgetInfo;
+            let widget_info: WidgetInfoContainer;
             let audio_widget_capabilities_info = AudioWidgetCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(AudioWidgetCapabilities))).unwrap();
 
             match audio_widget_capabilities_info.widget_type() {
                 WidgetType::AudioOutput => {
                     let ssrc_info = SampleSizeRateCAPsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SampleSizeRateCAPs))).unwrap();
-                    let sf_info = StreamFormatsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(StreamFormats))).unwrap();
+                    let sf_info = SupportedStreamFormatsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedStreamFormats))).unwrap();
                     let output_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(OutputAmpCapabilities))).unwrap();
                     let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ProcessingCapabilities))).unwrap();
 
-                    widget_info = WidgetInfo::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
+                    widget_info = WidgetInfoContainer::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
                 }
                 WidgetType::AudioInput => {
                     let ssrc_info = SampleSizeRateCAPsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SampleSizeRateCAPs))).unwrap();
-                    let sf_info = StreamFormatsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(StreamFormats))).unwrap();
+                    let sf_info = SupportedStreamFormatsInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedStreamFormats))).unwrap();
                     let input_amp_caps = AmpCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(InputAmpCapabilities))).unwrap();
                     let connection_list_length = ConnectionListLengthInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ConnectionListLength))).unwrap();
                     let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ProcessingCapabilities))).unwrap();
 
-                    widget_info = WidgetInfo::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
+                    widget_info = WidgetInfoContainer::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }
                 WidgetType::AudioMixer => {
-                    widget_info = WidgetInfo::Mixer;
+                    widget_info = WidgetInfoContainer::Mixer;
                 }
                 WidgetType::AudioSelector => {
-                    widget_info = WidgetInfo::Selector;
+                    widget_info = WidgetInfoContainer::Selector;
                 }
 
                 WidgetType::PinComplex => {
@@ -380,19 +425,19 @@ impl IHDA {
                     let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ProcessingCapabilities))).unwrap();
 
-                    widget_info = WidgetInfo::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
+                    widget_info = WidgetInfoContainer::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
                 }
                 WidgetType::PowerWidget => {
-                    widget_info = WidgetInfo::Power;
+                    widget_info = WidgetInfoContainer::Power;
                 }
                 WidgetType::VolumeKnobWidget => {
-                    widget_info = WidgetInfo::VolumeKnob;
+                    widget_info = WidgetInfoContainer::VolumeKnob;
                 }
                 WidgetType::BeepGeneratorWidget => {
-                    widget_info = WidgetInfo::BeepGenerator;
+                    widget_info = WidgetInfoContainer::BeepGenerator;
                 }
                 WidgetType::VendorDefinedAudioWidget => {
-                    widget_info = WidgetInfo::VendorDefined;
+                    widget_info = WidgetInfoContainer::VendorDefined;
                 }
             }
 
