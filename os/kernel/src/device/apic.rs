@@ -4,7 +4,7 @@ use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
 use acpi::InterruptModel;
 use alloc::vec::Vec;
-use log::info;
+use log::{debug, info};
 use raw_cpuid::CpuId;
 use spin::Mutex;
 use x2apic::ioapic::{IoApic, IrqFlags, IrqMode, RedirectionTableEntry};
@@ -90,7 +90,7 @@ impl Apic {
                     info!("[{}] IO {} detected", apic_desc.io_apics.len(), if apic_desc.io_apics.len() == 1 { "APIC" } else { "APICs" });
 
                     if apic_desc.io_apics.len() > 1 {
-                        panic!("More than one IO APIC found!");
+                        debug!("WARNING: More than one IO APIC found! First one was auto-selected");
                     }
 
                     let io_apic_desc = apic_desc.io_apics.get(0).unwrap_or_else(|| panic!("No IO APIC described by MADT!"));
