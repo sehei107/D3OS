@@ -59,6 +59,40 @@ impl<T: LowerHex + PrimInt> Register<T> {
     }
 }
 
+// representation of a register set for each stream descriptor (starting at offset 0x80)
+#[derive(Getters)]
+pub struct StreamDescriptorRegisters {
+    // careful: the sdctl register is only 3 bytes long, so that reading the register as an u32 also reads the sdsts register in the last byte
+    // the last byte of the read value should therefore not be manipulated
+    sdctl: Register<u32>,
+    sdsts: Register<u8>,
+    sdlpib: Register<u32>,
+    sdcbl: Register<u32>,
+    sdlvi: Register<u16>,
+    sdfifod: Register<u16>,
+    sdfmt: Register<u16>,
+    sdbdpl: Register<u32>,
+    sdbdpu: Register<u32>,
+}
+
+impl StreamDescriptorRegisters {
+    pub fn new(sd_base_address: u64) -> Self {
+        Self {
+            sdctl: Register::new(sd_base_address as *mut u32, "SD0CTL"),
+            sdsts: Register::new((sd_base_address + 0x3) as *mut u8, "SD0STS"),
+            sdlpib: Register::new((sd_base_address + 0x4) as *mut u32, "SD0LPIB"),
+            sdcbl: Register::new((sd_base_address + 0x8) as *mut u32, "SD0CBL"),
+            sdlvi: Register::new((sd_base_address + 0xC) as *mut u16, "SD0LVI"),
+            // bytes with offset 0x8E to 0x8F are reserved
+            sdfifod: Register::new((sd_base_address + 0x10) as *mut u16, "SD0FIFOD"),
+            sdfmt: Register::new((sd_base_address + 0x12) as *mut u16, "SD0FMT"),
+            // bytes with offset 0x94 to 0x97 are reserved
+            sdbdpl: Register::new((sd_base_address + 0x18) as *mut u32, "SD0DPL"),
+            sdbdpu: Register::new((sd_base_address + 0x1C) as *mut u32, "SD0DPU"),
+        }
+    }
+}
+
 // representation of all IHDA registers
 #[derive(Getters)]
 pub struct ControllerRegisterSet {
@@ -96,21 +130,40 @@ pub struct ControllerRegisterSet {
     icis: Register<u16>,
     dpiblbase: Register<u32>,
     dpibubase: Register<u32>,
-    sd0ctl: Register<u32>,
-    sd0sts: Register<u8>,
-    sd0lpib: Register<u32>,
-    sd0cbl: Register<u32>,
-    sd0lvi: Register<u16>,
-    sd0fifod: Register<u16>,
-    sd0fmt: Register<u16>,
-    sd0bdpl: Register<u32>,
-    sd0bdpu: Register<u32>,
-    walclka: Register<u32>,
-    sd0lpiba: Register<u32>,
+
+    input_stream_descriptors: Vec<StreamDescriptorRegisters>,
+    output_stream_descriptors: Vec<StreamDescriptorRegisters>,
+    bidirectional_stream_descriptors: Vec<StreamDescriptorRegisters>,
+
+    // the aliases at high adresses are used to pass information to user level applications instead of the actual registers,
+    // so that more sensible registers don't get accidentally passed, because they are on the same kernel page
+    walclk_alias: Register<u32>,
+    // sdlpiba_aliases: Vec<Register<u32>>,
 }
 
 impl ControllerRegisterSet {
     pub fn new(mmio_base_address: u64) -> Self {
+        // the following reads address the Global Capacities (GCAP) register, which contains information on the amount of
+        // input, output and bidirectional stream descriptors of a specific IHDA sound card
+        let input_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0x0F00) >> 8 };
+        let output_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0xF000) >> 12 };
+        let bidirectional_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0b0000_0000_1111_1000) >> 3 };
+
+        let mut input_stream_descriptors = Vec::new();
+        for index in 0..input_stream_descriptor_amount {
+            input_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * index)) as u64));
+        }
+
+        let mut output_stream_descriptors = Vec::new();
+        for index in 0..output_stream_descriptor_amount {
+            output_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * (input_stream_descriptor_amount + index))) as u64));
+        }
+
+        let mut bidirectional_stream_descriptors = Vec::new();
+        for index in 0..bidirectional_stream_descriptor_amount {
+            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))) as u64));
+        }
+
         Self {
             gcap: Register::new(mmio_base_address as *mut u16, "GCAP"),
             vmin: Register::new((mmio_base_address + 0x2) as *mut u8, "VMIN"),
@@ -156,23 +209,13 @@ impl ControllerRegisterSet {
             dpiblbase: Register::new((mmio_base_address + 0x70) as *mut u32, "DPIBLBASE"),
             dpibubase: Register::new((mmio_base_address + 0x74) as *mut u32, "DPIBUBASE"),
             // bytes with offset 0x78 to 0x7F are reserved
-            // careful: the sd0ctl register is only 3 bytes long, so that reading the register as an u32 also reads the sd0sts register in the last byte
-            // the last byte of the read value should therefore not be manipulated
-            sd0ctl: Register::new((mmio_base_address + 0x80) as *mut u32, "SD0CTL"),
-            sd0sts: Register::new((mmio_base_address + 0x83) as *mut u8, "SD0STS"),
-            sd0lpib: Register::new((mmio_base_address + 0x84) as *mut u32, "SD0LPIB"),
-            sd0cbl: Register::new((mmio_base_address + 0x88) as *mut u32, "SD0CBL"),
-            sd0lvi: Register::new((mmio_base_address + 0x8C) as *mut u16, "SD0LVI"),
-            // bytes with offset 0x8E to 0x8F are reserved
-            sd0fifod: Register::new((mmio_base_address + 0x90) as *mut u16, "SD0FIFOD"),
-            sd0fmt: Register::new((mmio_base_address + 0x92) as *mut u16, "SD0FMT"),
-            // bytes with offset 0x94 to 0x97 are reserved
-            sd0bdpl: Register::new((mmio_base_address + 0x98) as *mut u32, "SD0DPL"),
-            sd0bdpu: Register::new((mmio_base_address + 0x9C) as *mut u32, "SD0DPU"),
-            // registers for additional stream descriptors starting from byte A0 are optional
-            walclka: Register::new((mmio_base_address + 0x2030) as *mut u32, "WALCLKA"),
-            sd0lpiba: Register::new((mmio_base_address + 0x2084) as *mut u32, "SD0LPIBA"),
-            // registers for additional link positions starting from byte 20A0 are optional
+
+            input_stream_descriptors,
+            output_stream_descriptors,
+            bidirectional_stream_descriptors,
+
+            walclk_alias: Register::new((mmio_base_address + 0x2030) as *mut u32, "WALCLKA"),
+            // sdlpiba_aliases: Vec<Register<u32>>,
         }
     }
 
