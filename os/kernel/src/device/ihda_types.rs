@@ -143,25 +143,28 @@ pub struct ControllerRegisterSet {
 
 impl ControllerRegisterSet {
     pub fn new(mmio_base_address: u64) -> Self {
-        // the following reads address the Global Capacities (GCAP) register, which contains information on the amount of
-        // input, output and bidirectional stream descriptors of a specific IHDA sound card
-        let input_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0x0F00) >> 8 };
-        let output_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0xF000) >> 12 };
-        let bidirectional_stream_descriptor_amount = unsafe { ((mmio_base_address as *mut u16).read() &0b0000_0000_1111_1000) >> 3 };
+        const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
+        const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
+        // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
+        // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
+        let gctl = unsafe { (mmio_base_address as *mut u16).read() as u64 };
+        let input_stream_descriptor_amount = (gctl & 0x0F00) >> 8;
+        let output_stream_descriptor_amount = (gctl & 0xF000) >> 12;
+        let bidirectional_stream_descriptor_amount = (gctl & 0b0000_0000_1111_1000) >> 3;
 
         let mut input_stream_descriptors = Vec::new();
         for index in 0..input_stream_descriptor_amount {
-            input_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * index)) as u64));
+            input_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)));
         }
 
         let mut output_stream_descriptors = Vec::new();
         for index in 0..output_stream_descriptor_amount {
-            output_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * (input_stream_descriptor_amount + index))) as u64));
+            output_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))));
         }
 
         let mut bidirectional_stream_descriptors = Vec::new();
         for index in 0..bidirectional_stream_descriptor_amount {
-            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new((0x80 + (0x20 * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))) as u64));
+            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))));
         }
 
         Self {
