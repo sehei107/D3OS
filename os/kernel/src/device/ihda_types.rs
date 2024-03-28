@@ -587,3 +587,70 @@ impl ResponseParser {
         }
     }
 }
+
+#[derive(Debug, Getters)]
+pub struct BufferDescriptorListEntry {
+    address: u64,
+    length: u32,
+    interrupt_on_completion: bool,
+}
+
+impl BufferDescriptorListEntry {
+    pub fn new(address: u64, length: u32, interrupt_on_completion: bool) -> Self {
+        Self {
+            address,
+            length,
+            interrupt_on_completion
+        }
+    }
+
+    pub fn from(raw_data: u128) -> Self {
+        Self {
+            address: (raw_data & 0xFFFF_FFFF_FFFF_FFFF) as u64,
+            length: ((raw_data >> 64) & 0xFFFF_FFFF) as u32,
+            // probably better use get_bit() function from ihda_node_infos.rs, after moving it to a better place
+            // or even better: use a proper library for all the bit operations on unsigned integers
+            interrupt_on_completion: ((raw_data >> 96) & 1) == 1,
+        }
+    }
+
+    pub fn as_u128(&self) -> u128 {
+        (self.interrupt_on_completion as u128) << 96 | (self.length as u128) << 64 | self.address as u128
+    }
+}
+
+pub struct BufferDescriptorList {
+    bdl_base_address: u64,
+    max_amount_of_entries: u16
+}
+
+impl BufferDescriptorList {
+    pub fn new(bdl_fram_range: PageRange) -> Self {
+        let (bdl_base_address, max_amount_of_entries) = match bdl_fram_range {
+            PageRange { start, end } => {
+                let start = start.start_address().as_u64();
+                let mut max_amount_of_entries = (end.start_address().as_u64() - start) / BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u64;
+                if max_amount_of_entries > MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES as u64 {
+                    max_amount_of_entries = MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES as u64;
+                    info!("WARNING: More memory for buffer descriptor list allocated than necessary")
+                }
+                (start, max_amount_of_entries as u16)
+            }
+        };
+
+        Self {
+            bdl_base_address,
+            max_amount_of_entries,
+        }
+    }
+
+    pub fn get_entry(&self, index: u8) -> BufferDescriptorListEntry {
+        let raw_data = unsafe { ((self.bdl_base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).read() };
+        BufferDescriptorListEntry::from(raw_data)
+    }
+
+    pub fn set_entry(&self, index: u8, entry: BufferDescriptorListEntry) {
+        unsafe { ((self.bdl_base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).write(entry.as_u128()) };
+
+    }
+}
