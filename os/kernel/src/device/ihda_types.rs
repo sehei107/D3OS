@@ -154,17 +154,17 @@ impl ControllerRegisterSet {
 
         let mut input_stream_descriptors = Vec::new();
         for index in 0..input_stream_descriptor_amount {
-            input_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)));
+            input_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)));
         }
 
         let mut output_stream_descriptors = Vec::new();
         for index in 0..output_stream_descriptor_amount {
-            output_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))));
+            output_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))));
         }
 
         let mut bidirectional_stream_descriptors = Vec::new();
         for index in 0..bidirectional_stream_descriptor_amount {
-            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))));
+            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))));
         }
 
         Self {
