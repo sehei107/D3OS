@@ -1,14 +1,21 @@
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
 use core::ops::BitAnd;
-use log::debug;
+use log::{debug, info};
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
-use crate::device::ihda_node_infos::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, ChannelStreamIdInfo, ConfigurationDefaultInfo, ConnectionListEntryInfo, ConnectionListLengthInfo, ConnectionSelectInfo, FunctionGroupTypeInfo, GPIOCountInfo, Info, PinCapabilitiesInfo, PinWidgetControlInfo, ProcessingCapabilitiesInfo, RevisionIdInfo, SampleSizeRateCAPsInfo, StreamFormatInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, SupportedStreamFormatsInfo, VendorIdInfo, VolumeKnobCapabilitiesInfo};
+use x86_64::structures::paging::frame::PhysFrameRange;
+use x86_64::structures::paging::page::PageRange;
+use crate::device::ihda_node_infos::{AmpCapabilitiesInfo, AmplifierGainMuteInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, ChannelStreamIdInfo, ConfigurationDefaultInfo, ConnectionListEntryInfo, ConnectionListLengthInfo, ConnectionSelectInfo, EAPDBTLEnableInfo, FunctionGroupTypeInfo, GetAmplifierGainMuteSide, GetAmplifierGainMuteType, GPIOCountInfo, Info, PinCapabilitiesInfo, PinWidgetControlInfo, ProcessingCapabilitiesInfo, RevisionIdInfo, SampleSizeRateCAPsInfo, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, StreamFormatInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, SupportedStreamFormatsInfo, VendorIdInfo, VolumeKnobCapabilitiesInfo};
+use crate::device::pit::Timer;
 use crate::timer;
 
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
+const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
+const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
+const MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET: u8 = 16;
+const MAX_AMPLIFIER_GAIN: u8 = u8::MAX;
 
 // representation of an IHDA register
 pub struct Register<T: LowerHex + PrimInt> {
@@ -39,7 +46,7 @@ impl<T: LowerHex + PrimInt> Register<T> {
         let bitmask: u32 = 0x1 << index;
         self.write(self.read() | T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
     }
-    pub unsafe fn clear_bit(&self, index: u8) {
+    pub fn clear_bit(&self, index: u8) {
         let bitmask: u32 = 0x1 << index;
         self.write(self.read() & !T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
     }
@@ -429,6 +436,9 @@ pub enum WidgetInfoContainer {
         ConnectionListLengthInfo,
         SupportedPowerStatesInfo,
         ProcessingCapabilitiesInfo,
+
+        ConfigurationDefaultInfo,
+        ConnectionListEntryInfo,
     ),
     Mixer,
     Selector,
@@ -447,12 +457,18 @@ impl CommandBuilder {
             Command::GetConnectionSelect => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
             Command::SetConnectionSelect { connection_index } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *connection_index),
             Command::GetConnectionListEntry { offset } => Self::command_with_12bit_identifier_verb(node_address, command.id(), *offset),
+            Command::GetAmplifierGainMute { amp_type, side, index }
+                => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_get_amplifier_gain_mute(amp_type, side, *index)),
+            Command::SetAmplifierGainMute { amp_type, side, index, mute, gain }
+                => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_set_amplifier_gain_mute(amp_type, side, *index, *mute, *gain)),
             Command::GetStreamFormat => Self::command_with_4bit_identifier_verb(node_address, command.id(), 0x0),
             Command::SetStreamFormat(stream_format) => Self::command_with_4bit_identifier_verb(node_address, command.id(), stream_format.as_u16()),
             Command::GetChannelStreamId => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
             Command::SetChannelStreamId(channel_stream_id) => Self::command_with_12bit_identifier_verb(node_address, command.id(), channel_stream_id.as_u8()),
             Command::GetPinWidgetControl => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
             Command::SetPinWidgetControl(pin_control) => Self::command_with_12bit_identifier_verb(node_address, command.id(), pin_control.as_u8()),
+            Command::GetEAPDBTLEnable => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetEAPDBTLEnable(eapd_btl_enable) => Self::command_with_12bit_identifier_verb(node_address, command.id(), eapd_btl_enable.as_u8()),
             Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
         }
     }
@@ -470,6 +486,39 @@ impl CommandBuilder {
             | (verb_id as u32) << 16
             | payload as u32
     }
+
+    fn parse_get_amplifier_gain_mute(amp_type: &GetAmplifierGainMuteType, side: &GetAmplifierGainMuteSide, index: u8) -> u16 {
+        let amp_type: u16 = match amp_type  {
+            GetAmplifierGainMuteType::Input => 0,
+            GetAmplifierGainMuteType::Output => 1,
+        };
+        let side: u16 = match side  {
+            GetAmplifierGainMuteSide::Right => 0,
+            GetAmplifierGainMuteSide::Left => 1,
+        };
+        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
+        debug!("get_amplifier: {:#x}", amp_type << 15 | side << 13 | index as u16);
+
+        amp_type << 15 | side << 13 | index as u16
+    }
+
+    fn parse_set_amplifier_gain_mute(amp_type: &SetAmplifierGainMuteType, side: &SetAmplifierGainMuteSide, index: u8, mute: bool, gain: u8) -> u16 {
+        let amp_type: u16 = match amp_type  {
+            SetAmplifierGainMuteType::Input => 0b01,
+            SetAmplifierGainMuteType::Output => 0b10,
+            SetAmplifierGainMuteType::Both => 0b11,
+        };
+        let side: u16 = match side  {
+            SetAmplifierGainMuteSide::Right => 0b01,
+            SetAmplifierGainMuteSide::Left => 0b10,
+            SetAmplifierGainMuteSide::Both => 0b11,
+        };
+        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
+        if gain > MAX_AMPLIFIER_GAIN { panic!("Trying to set amplifier gain higher than max value") }
+        debug!("set_amplifier: {:#x}", amp_type << 14 | side << 12 | (index as u16) << 8 | (mute as u16) << 7 | gain as u16);
+
+        amp_type << 14 | side << 12 | (index as u16) << 8 | (mute as u16) << 7 | gain as u16
+    }
 }
 
 #[derive(Debug)]
@@ -478,12 +527,16 @@ pub enum Command {
     GetConnectionSelect,
     SetConnectionSelect { connection_index: u8 },
     GetConnectionListEntry { offset: u8 },
+    GetAmplifierGainMute  { amp_type: GetAmplifierGainMuteType, side: GetAmplifierGainMuteSide, index: u8 },
+    SetAmplifierGainMute { amp_type: SetAmplifierGainMuteType, side: SetAmplifierGainMuteSide, index: u8, mute: bool, gain: u8 },
     GetStreamFormat,
     SetStreamFormat(StreamFormatInfo),
     GetChannelStreamId,
     SetChannelStreamId(ChannelStreamIdInfo),
     GetPinWidgetControl,
     SetPinWidgetControl(PinWidgetControlInfo),
+    GetEAPDBTLEnable,
+    SetEAPDBTLEnable(EAPDBTLEnableInfo),
     GetConfigurationDefault,
 }
 
@@ -492,14 +545,18 @@ impl Command {
         match self {
             Command::GetParameter(_) => 0xF00,
             Command::GetConnectionSelect => 0xF01,
-            Command::SetConnectionSelect { connection_index: _ } => 0x701,
-            Command::GetConnectionListEntry { offset: _ } => 0xF02,
+            Command::SetConnectionSelect { .. } => 0x701,
+            Command::GetConnectionListEntry { .. } => 0xF02,
+            Command::GetAmplifierGainMute { .. } => 0xB,
+            Command::SetAmplifierGainMute { .. } => 0x3,
             Command::GetStreamFormat => 0xA,
             Command::SetStreamFormat(_) => 0x2,
             Command::GetChannelStreamId => 0xF06,
             Command::SetChannelStreamId(_) => 0x706,
             Command::GetPinWidgetControl => 0xF07,
             Command::SetPinWidgetControl(_) => 0x707,
+            Command::GetEAPDBTLEnable => 0xF0C,
+            Command::SetEAPDBTLEnable(_) => 0x70C,
             Command::GetConfigurationDefault => 0xF1C,
         }
     }
@@ -577,13 +634,17 @@ impl ResponseParser {
             Command::GetConnectionSelect => Info::ConnectionSelect(ConnectionSelectInfo::new(response)),
             Command::SetConnectionSelect { .. } => Info::SetInfo,
             Command::GetConnectionListEntry { .. } => Info::ConnectionListEntry(ConnectionListEntryInfo::new(response)),
+            Command::GetAmplifierGainMute { .. } => Info::AmplifierGainMute(AmplifierGainMuteInfo::new(response)),
+            Command::SetAmplifierGainMute { .. } => Info::SetInfo,
             Command::GetStreamFormat { .. } => Info::StreamFormat(StreamFormatInfo::new(response)),
             Command::SetStreamFormat { .. } => Info::SetInfo,
             Command::GetChannelStreamId => Info::ChannelStreamId(ChannelStreamIdInfo::new(response)),
             Command::SetChannelStreamId(_) => Info::SetInfo,
-            Command::GetConfigurationDefault => Info::ConfigurationDefault(ConfigurationDefaultInfo::new(response)),
             Command::GetPinWidgetControl => Info::PinWidgetControl(PinWidgetControlInfo::new(response)),
             Command::SetPinWidgetControl { .. } => Info::SetInfo,
+            Command::GetEAPDBTLEnable => Info::EAPDBTLEnable(EAPDBTLEnableInfo::new(response)),
+            Command::SetEAPDBTLEnable(_) => Info::SetInfo,
+            Command::GetConfigurationDefault => Info::ConfigurationDefault(ConfigurationDefaultInfo::new(response)),
         }
     }
 }
@@ -591,23 +652,31 @@ impl ResponseParser {
 #[derive(Debug, Getters)]
 pub struct BufferDescriptorListEntry {
     address: u64,
-    length: u32,
+    length_in_bytes: u32,
     interrupt_on_completion: bool,
 }
 
 impl BufferDescriptorListEntry {
-    pub fn new(address: u64, length: u32, interrupt_on_completion: bool) -> Self {
+    pub fn new(frame_range: PhysFrameRange, interrupt_on_completion: bool) -> Self {
+        let address;
+        let length_in_bytes;
+        match frame_range {
+            PhysFrameRange { start, end } => {
+                address = start.start_address().as_u64();
+                length_in_bytes = ((end.start_address().as_u64() - address) / 8 ) as u32;
+            }
+        }
         Self {
             address,
-            length,
-            interrupt_on_completion
+            length_in_bytes,
+            interrupt_on_completion,
         }
     }
 
     pub fn from(raw_data: u128) -> Self {
         Self {
             address: (raw_data & 0xFFFF_FFFF_FFFF_FFFF) as u64,
-            length: ((raw_data >> 64) & 0xFFFF_FFFF) as u32,
+            length_in_bytes: ((raw_data >> 64) & 0xFFFF_FFFF) as u32,
             // probably better use get_bit() function from ihda_node_infos.rs, after moving it to a better place
             // or even better: use a proper library for all the bit operations on unsigned integers
             interrupt_on_completion: ((raw_data >> 96) & 1) == 1,
@@ -615,19 +684,29 @@ impl BufferDescriptorListEntry {
     }
 
     pub fn as_u128(&self) -> u128 {
-        (self.interrupt_on_completion as u128) << 96 | (self.length as u128) << 64 | self.address as u128
+        (self.interrupt_on_completion as u128) << 96 | (self.length_in_bytes as u128) << 64 | self.address as u128
+    }
+
+    pub fn get_buffer_entry(&self, index: u32) -> u32 {
+        unsafe { ((self.address + (index as u64 * 32u64)) as *mut u32).read() }
+    }
+
+    pub fn set_buffer_entry(&self, index: u32, entry: u32) {
+        unsafe { ((self.address + (index as u64 * 32u64)) as *mut u32).write(entry) };
+
     }
 }
 
+#[derive(Debug, Getters)]
 pub struct BufferDescriptorList {
-    bdl_base_address: u64,
+    base_address: u64,
     max_amount_of_entries: u16
 }
 
 impl BufferDescriptorList {
-    pub fn new(bdl_fram_range: PageRange) -> Self {
-        let (bdl_base_address, max_amount_of_entries) = match bdl_fram_range {
-            PageRange { start, end } => {
+    pub fn new(bdl_frame_range: PhysFrameRange) -> Self {
+        let (bdl_base_address, max_amount_of_entries) = match bdl_frame_range {
+            PhysFrameRange { start, end } => {
                 let start = start.start_address().as_u64();
                 let mut max_amount_of_entries = (end.start_address().as_u64() - start) / BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u64;
                 if max_amount_of_entries > MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES as u64 {
@@ -639,18 +718,22 @@ impl BufferDescriptorList {
         };
 
         Self {
-            bdl_base_address,
+            base_address: bdl_base_address,
             max_amount_of_entries,
         }
     }
 
     pub fn get_entry(&self, index: u8) -> BufferDescriptorListEntry {
-        let raw_data = unsafe { ((self.bdl_base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).read() };
+        let raw_data = unsafe { ((self.base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).read() };
         BufferDescriptorListEntry::from(raw_data)
     }
 
-    pub fn set_entry(&self, index: u8, entry: BufferDescriptorListEntry) {
-        unsafe { ((self.bdl_base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).write(entry.as_u128()) };
+    pub fn set_entry(&self, index: u8, entry: &BufferDescriptorListEntry) {
+        unsafe { ((self.base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).write(entry.as_u128()) };
 
+    }
+
+    pub fn last_valid_index(&self) -> u8 {
+        (self.max_amount_of_entries - 1) as u8
     }
 }

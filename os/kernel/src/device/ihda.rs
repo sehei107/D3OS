@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::arch::asm;
 use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
@@ -11,9 +12,9 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
-use crate::device::ihda_node_infos::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultInfo, ConnectionListEntryInfo, ConnectionListLengthInfo, ConnectionSelectInfo, FunctionGroupTypeInfo, GPIOCountInfo, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RevisionIdInfo, SampleSizeRateCAPsInfo, SupportedStreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetType, StreamFormatInfo};
-use crate::device::ihda_types::{Codec, ControllerRegisterSet, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, Parameter};
-use crate::device::ihda_types::Command::{GetConfigurationDefault, GetConnectionListEntry, GetConnectionSelect, GetParameter, GetStreamFormat};
+use crate::device::ihda_node_infos::{AmpCapabilitiesInfo, AudioFunctionGroupCapabilitiesInfo, AudioWidgetCapabilitiesInfo, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultInfo, ConnectionListEntryInfo, ConnectionListLengthInfo, ConnectionSelectInfo, FunctionGroupTypeInfo, GPIOCountInfo, PinCapabilitiesInfo, ProcessingCapabilitiesInfo, RevisionIdInfo, SampleSizeRateCAPsInfo, SupportedStreamFormatsInfo, SubordinateNodeCountInfo, SupportedPowerStatesInfo, VendorIdInfo, WidgetType, StreamFormatInfo, AmplifierGainMuteInfo, GetAmplifierGainMuteType, GetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetAmplifierGainMuteSide, ChannelStreamIdInfo, PinWidgetControlInfo, EAPDBTLEnableInfo, BitsPerSample};
+use crate::device::ihda_types::{Codec, ControllerRegisterSet, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, Parameter, BufferDescriptorList, Register, BufferDescriptorListEntry};
+use crate::device::ihda_types::Command::{GetAmplifierGainMute, GetChannelStreamId, GetConfigurationDefault, GetConnectionListEntry, GetConnectionSelect, GetEAPDBTLEnable, GetParameter, GetPinWidgetControl, GetStreamFormat, SetAmplifierGainMute, SetChannelStreamId, SetEAPDBTLEnable, SetPinWidgetControl};
 use crate::device::ihda_types::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SupportedStreamFormats, SubordinateNodeCount, SupportedPowerStates, VendorId};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -58,6 +59,9 @@ impl IHDA {
 
         // interview sound card
         let codecs = IHDA::scan_for_available_codecs(&register_interface);
+
+        IHDA::prepare_default_stereo_output(&register_interface, &codecs.get(0).unwrap());
+
         debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
         // debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
@@ -425,8 +429,10 @@ impl IHDA {
                     let connection_list_length = ConnectionListLengthInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ConnectionListLength))).unwrap();
                     let supported_power_states = SupportedPowerStatesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesInfo::try_from(register_interface.send_command(&widget_address, &GetParameter(ProcessingCapabilities))).unwrap();
+                    let configuration_default = ConfigurationDefaultInfo::try_from(register_interface.send_command(&widget_address, &GetConfigurationDefault)).unwrap();
+                    let first_connection_list_entries = ConnectionListEntryInfo::try_from(register_interface.send_command(&widget_address, &GetConnectionListEntry { offset: 0 })).unwrap();
 
-                    widget_info = WidgetInfoContainer::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
+                    widget_info = WidgetInfoContainer::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities, configuration_default, first_connection_list_entries);
                 }
                 WidgetType::PowerWidget => {
                     widget_info = WidgetInfoContainer::Power;
@@ -445,5 +451,227 @@ impl IHDA {
             widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
         }
         widgets
+    }
+
+    fn prepare_default_stereo_output(register_interface: &RegisterInterface, codec: &Codec) {
+        let widgets = codec.root_node().function_group_nodes().get(0).unwrap().widgets();
+        let line_out_pin_widgets_connected_to_jack = Self::find_line_out_pin_widgets_connected_to_jack(widgets);
+        let default_output = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
+
+        Self::default_stereo_setup(default_output, register_interface, codec);
+
+    }
+
+    fn find_line_out_pin_widgets_connected_to_jack(widgets: &Vec<WidgetNode>) -> Vec<&WidgetNode> {
+        let mut pin_widgets_connected_to_jack = Vec::new();
+        for widget in widgets.iter() {
+            match widget.audio_widget_capabilities().widget_type() {
+                WidgetType::PinComplex => {
+                    let config_defaults = match widget.widget_info() {
+                        WidgetInfoContainer::PinComplex(_, _, _, _, _, _, config_default, _) => {
+                            config_default
+                        }
+                        _ => {
+                            panic!("This arm should never be reached!")
+                        }
+                    };
+                    match config_defaults.port_connectivity() {
+                        ConfigDefPortConnectivity::Jack | ConfigDefPortConnectivity::JackAndInternalDevice => {
+                            match config_defaults.default_device() {
+                                ConfigDefDefaultDevice::LineOut => {
+                                    pin_widgets_connected_to_jack.push(widget);
+                                }
+                                _ => {},
+                            }
+                        }
+                        _ => {},
+                    }
+                }
+                _ => {},
+            }
+        }
+
+        pin_widgets_connected_to_jack
+    }
+
+    fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &RegisterInterface, codec: &Codec) {
+
+        // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
+        debug!("pin widget: {:?}", pin_widget.address());
+        register_interface.send_command(pin_widget.address(), &SetAmplifierGainMute { amp_type: SetAmplifierGainMuteType::Both, side: SetAmplifierGainMuteSide::Both, index: 0, mute: false, gain: 100 });
+        // debug!("input amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("input amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+
+        // activate input and output for pin widget
+        let pin_widget_control = PinWidgetControlInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetPinWidgetControl)).unwrap();
+        // debug!("pin widget control before: {:?}", pin_widget_control);
+        /* after the following command, plugging headphones in and out the jack should make an audible noise */
+        register_interface.send_command(&pin_widget.address(), &SetPinWidgetControl(PinWidgetControlInfo::new((pin_widget_control.as_u8() | 0b0110_0000) as u32)));
+        // debug!("pin widget control after: {:?}", PinWidgetControlInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetPinWidgetControl)).unwrap());
+
+        // let eapd = EAPDBTLEnableInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetEAPDBTLEnable)).unwrap();
+        // debug!("eapd before: {:?}", eapd);
+        // register_interface.send_command(&pin_widget.address(), &SetEAPDBTLEnable(EAPDBTLEnableInfo::new(0b111)));
+        // debug!("eapd after: {:?}", EAPDBTLEnableInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetEAPDBTLEnable)).unwrap());
+        // Timer::wait(10000);
+
+        let connection_list_entries = ConnectionListEntryInfo::try_from(register_interface.send_command(pin_widget.address(), &GetConnectionListEntry { offset: 0 } )).unwrap();
+        let mixer_widget = NodeAddress::new(0, *connection_list_entries.connection_list_entry_at_offset_index());
+
+        // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
+        debug!("mixer widget: {:?}", mixer_widget);
+        // debug!("input amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("input amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+        register_interface.send_command(&mixer_widget, &SetAmplifierGainMute { amp_type: SetAmplifierGainMuteType::Input, side: SetAmplifierGainMuteSide::Both, index: 0, mute: false, gain: 100 });
+        // debug!("input amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("input amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+
+
+        let connection_list_entries = ConnectionListEntryInfo::try_from(register_interface.send_command(&mixer_widget, &GetConnectionListEntry { offset: 0 } )).unwrap();
+        let audio_out_widget = NodeAddress::new(0, *connection_list_entries.connection_list_entry_at_offset_index());
+
+        // get audio widget capabilities
+        // debug!("pin widget capabilities: {:?}, ", AudioWidgetCapabilitiesInfo::try_from(register_interface.send_command(pin_widget.address(), &GetParameter(AudioWidgetCapabilities))).unwrap());
+        // debug!("mixer widget capabilities: {:?}, ", AudioWidgetCapabilitiesInfo::try_from(register_interface.send_command(&mixer_widget, &GetParameter(AudioWidgetCapabilities))).unwrap());
+        // debug!("output converter widget capabilities: {:?}, ", AudioWidgetCapabilitiesInfo::try_from(register_interface.send_command(&audio_out_widget, &GetParameter(AudioWidgetCapabilities))).unwrap());
+
+        // get stream format
+        debug!("output converter widget capabilities: {:?}, ", StreamFormatInfo::try_from(register_interface.send_command(&audio_out_widget, &GetStreamFormat)).unwrap());
+
+        // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
+        // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
+        // default gain value is 87
+        debug!("audio out widget: {:?}", audio_out_widget);
+        // debug!("output amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+        register_interface.send_command(&audio_out_widget, &SetAmplifierGainMute { amp_type: SetAmplifierGainMuteType::Both, side: SetAmplifierGainMuteSide::Both, index: 0, mute: false, gain: 127 });
+        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
+        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
+
+        // set stream id to 1
+        debug!("channel stream id before: {:?}", ChannelStreamIdInfo::try_from(register_interface.send_command(&audio_out_widget, &GetChannelStreamId)).unwrap());
+        register_interface.send_command(&audio_out_widget, &SetChannelStreamId(ChannelStreamIdInfo::new(0x10)));
+        debug!("channel stream id after: {:?}", ChannelStreamIdInfo::try_from(register_interface.send_command(&audio_out_widget, &GetChannelStreamId)).unwrap());
+
+        // set stream descriptor
+        let sd_registers = register_interface.crs().output_stream_descriptors().get(0).unwrap();
+
+        debug!("----------------------------------------------------------------------------------");
+        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
+        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
+        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
+        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
+        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
+        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
+
+        // stop stream in case it is running
+        sd_registers.sdctl().clear_bit(1);
+
+        // reset stream
+        // sd_registers.sdctl().set_bit(0);
+        // sd_registers.sdctl().write(sd_registers.sdctl().read() & 0xFF1F_FFFD);
+
+        // set stream number
+        sd_registers.sdctl().write(sd_registers.sdctl().read() | 0x10_0000);
+
+        // setup MMIO space for buffer descriptor list
+        // hard coded 8*4096 for 256 entries with 128 bits each
+        let bdl_frame_range = memory::physical::alloc(1);
+        unsafe { asm!("wbinvd"); }
+        debug!("wbinvd");
+        Timer::wait(50000);
+
+        debug!("bdl_base_address: {}", bdl_frame_range.start.start_address().as_u64());
+
+        match bdl_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                let start_address = start.start_address().as_u64();
+                let lbase = (start_address & 0xFFFFFFFF) as u32;
+                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+                sd_registers.sdbdpl().write(lbase);
+                sd_registers.sdbdpu().write(ubase);
+            }
+        }
+
+        let bdl = BufferDescriptorList::new(bdl_frame_range);
+
+        debug!("buffer descriptor list: {:?}", bdl);
+
+        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), true);
+        let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), true);
+
+        bdl.set_entry(0, &data_buffer0);
+        bdl.set_entry(1, &data_buffer1);
+
+        debug!("bdl entry 0: {:?}", bdl.get_entry(0));
+        debug!("bdl entry 1: {:?}", bdl.get_entry(1));
+        debug!("bdl entry 2: {:?}", bdl.get_entry(2));
+
+        debug!("data_buffer0 address: {:?}", data_buffer0.address());
+        debug!("data_buffer1 address: {:?}", data_buffer1.address());
+        debug!("data_buffer0 address: {:?}", data_buffer0.length_in_bytes());
+        debug!("data_buffer1 address: {:?}", data_buffer1.length_in_bytes());
+
+        for index in 0..(data_buffer0.length_in_bytes() / 4) {
+            data_buffer0.set_buffer_entry(index, 0b1111_1111_1111_1111_1111_1111_0000_0000);
+            data_buffer1.set_buffer_entry(index, 0b1111_1111_0000_0000);
+        }
+
+        for index in 0..5 {
+            debug!("data_buffer0 sample at index {}: {}", index, data_buffer0.get_buffer_entry(index));
+            debug!("data_buffer1 sample at index {}: {}", index, data_buffer1.get_buffer_entry(index));
+        }
+
+        Timer::wait(20000);
+
+        data_buffer0.get_buffer_entry(0);
+
+        // set cyclic buffer length
+        sd_registers.sdcbl().write(*data_buffer0.length_in_bytes() + *data_buffer1.length_in_bytes());
+        sd_registers.sdlvi().write(1);
+
+        // set stream format
+        let stream_format = StreamFormatInfo::try_from(register_interface.send_command(&audio_out_widget, &GetStreamFormat)).unwrap();
+        sd_registers.sdfmt().write(stream_format.as_u16());
+
+        // run
+        sd_registers.sdctl().set_bit(1);
+
+        debug!("----------------------------------------------------------------------------------");
+        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
+        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
+        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
+        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
+        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
+        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
+
+        Timer::wait(60000);
+    }
+
+    fn allocate_data_buffer() -> PhysFrameRange {
+        // let container_size_in_bits = match stream_format_info.bits_per_sample() {
+        //     BitsPerSample::Eight => 8,
+        //     BitsPerSample::Sixteen => 16,
+        //     BitsPerSample::Twenty => 16,
+        //     BitsPerSample::Twentyfour => 32,
+        //     BitsPerSample::Thirtytwo => 32,
+        // };
+        // let block_size_in_bits = container_size_in_bits * stream_format_info.number_of_channels();
+        // let packet_size_in_bits = block_size_in_bits * stream_format_info.sample_base_rate_multiple() / stream_format_info.sample_base_rate_divisor();
+
+
+        memory::physical::alloc(1)
     }
 }
