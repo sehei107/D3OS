@@ -85,17 +85,17 @@ pub struct StreamDescriptorRegisters {
 impl StreamDescriptorRegisters {
     pub fn new(sd_base_address: u64) -> Self {
         Self {
-            sdctl: Register::new(sd_base_address as *mut u32, "SD0CTL"),
-            sdsts: Register::new((sd_base_address + 0x3) as *mut u8, "SD0STS"),
-            sdlpib: Register::new((sd_base_address + 0x4) as *mut u32, "SD0LPIB"),
-            sdcbl: Register::new((sd_base_address + 0x8) as *mut u32, "SD0CBL"),
-            sdlvi: Register::new((sd_base_address + 0xC) as *mut u16, "SD0LVI"),
+            sdctl: Register::new(sd_base_address as *mut u32, "SDCTL"),
+            sdsts: Register::new((sd_base_address + 0x3) as *mut u8, "SDSTS"),
+            sdlpib: Register::new((sd_base_address + 0x4) as *mut u32, "SDLPIB"),
+            sdcbl: Register::new((sd_base_address + 0x8) as *mut u32, "SDCBL"),
+            sdlvi: Register::new((sd_base_address + 0xC) as *mut u16, "SDLVI"),
             // bytes with offset 0x8E to 0x8F are reserved
-            sdfifod: Register::new((sd_base_address + 0x10) as *mut u16, "SD0FIFOD"),
-            sdfmt: Register::new((sd_base_address + 0x12) as *mut u16, "SD0FMT"),
+            sdfifod: Register::new((sd_base_address + 0x10) as *mut u16, "SDFIFOD"),
+            sdfmt: Register::new((sd_base_address + 0x12) as *mut u16, "SDFMT"),
             // bytes with offset 0x94 to 0x97 are reserved
-            sdbdpl: Register::new((sd_base_address + 0x18) as *mut u32, "SD0DPL"),
-            sdbdpu: Register::new((sd_base_address + 0x1C) as *mut u32, "SD0DPU"),
+            sdbdpl: Register::new((sd_base_address + 0x18) as *mut u32, "SDDPL"),
+            sdbdpu: Register::new((sd_base_address + 0x1C) as *mut u32, "SDDPU"),
         }
     }
 }
@@ -161,17 +161,29 @@ impl ControllerRegisterSet {
 
         let mut input_stream_descriptors = Vec::new();
         for index in 0..input_stream_descriptor_amount {
-            input_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)));
+            input_stream_descriptors.push(StreamDescriptorRegisters::new(
+                mmio_base_address
+                    + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)
+            ));
         }
 
         let mut output_stream_descriptors = Vec::new();
         for index in 0..output_stream_descriptor_amount {
-            output_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))));
+            output_stream_descriptors.push(StreamDescriptorRegisters::new(
+                mmio_base_address
+                    + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))
+            ));
         }
 
         let mut bidirectional_stream_descriptors = Vec::new();
         for index in 0..bidirectional_stream_descriptor_amount {
-            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(mmio_base_address + OFFSET_OF_FIRST_SOUND_DESCRIPTOR + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))));
+            bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(
+                mmio_base_address
+                    + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))
+            ));
         }
 
         Self {
