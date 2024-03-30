@@ -2,46 +2,65 @@ use core::fmt::LowerHex;
 use core::ops::BitAnd;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
+use crate::device::ihda_types::Command;
+
+
+// _TODO_: Replace u32 parameter in the new(response: u32) -> Self { ... } constructors with a RawResponse,
+// and add a field "associated_command: Command" to all types of the Response enum
+
+pub struct RawResponse {
+    response: u32,
+    associated_command: Command,
+}
+
+impl RawResponse {
+    pub fn new(response: u32, associated_command: Command) -> Self {
+        Self {
+            response,
+            associated_command,
+        }
+    }
+}
 
 #[derive(Debug)]
-pub enum Info {
-    VendorId(VendorIdInfo),
-    RevisionId(RevisionIdInfo),
-    SubordinateNodeCount(SubordinateNodeCountInfo),
-    FunctionGroupType(FunctionGroupTypeInfo),
-    AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesInfo),
-    AudioWidgetCapabilities(AudioWidgetCapabilitiesInfo),
-    SampleSizeRateCAPs(SampleSizeRateCAPsInfo),
-    SupportedStreamFormats(SupportedStreamFormatsInfo),
-    PinCapabilities(PinCapabilitiesInfo),
-    InputAmpCapabilities(AmpCapabilitiesInfo),
-    OutputAmpCapabilities(AmpCapabilitiesInfo),
-    ConnectionListLength(ConnectionListLengthInfo),
-    SupportedPowerStates(SupportedPowerStatesInfo),
-    ProcessingCapabilities(ProcessingCapabilitiesInfo),
-    GPIOCount(GPIOCountInfo),
-    VolumeKnobCapabilities(VolumeKnobCapabilitiesInfo),
+pub enum Response {
+    VendorId(VendorIdResponse),
+    RevisionId(RevisionIdResponse),
+    SubordinateNodeCount(SubordinateNodeCountResponse),
+    FunctionGroupType(FunctionGroupTypeResponse),
+    AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesResponse),
+    AudioWidgetCapabilities(AudioWidgetCapabilitiesResponse),
+    SampleSizeRateCAPs(SampleSizeRateCAPsResponse),
+    SupportedStreamFormats(SupportedStreamFormatsResponse),
+    PinCapabilities(PinCapabilitiesResponse),
+    InputAmpCapabilities(AmpCapabilitiesResponse),
+    OutputAmpCapabilities(AmpCapabilitiesResponse),
+    ConnectionListLength(ConnectionListLengthResponse),
+    SupportedPowerStates(SupportedPowerStatesResponse),
+    ProcessingCapabilities(ProcessingCapabilitiesResponse),
+    GPIOCount(GPIOCountResponse),
+    VolumeKnobCapabilities(VolumeKnobCapabilitiesResponse),
 
-    ConnectionSelect(ConnectionSelectInfo),
-    ConnectionListEntry(ConnectionListEntryInfo),
-    AmplifierGainMute(AmplifierGainMuteInfo),
-    ChannelStreamId(ChannelStreamIdInfo),
-    StreamFormat(StreamFormatInfo),
-    PinWidgetControl(PinWidgetControlInfo),
-    EAPDBTLEnable(EAPDBTLEnableInfo),
-    ConfigurationDefault(ConfigurationDefaultInfo),
+    ConnectionSelect(ConnectionSelectResponse),
+    ConnectionListEntry(ConnectionListEntryResponse),
+    AmplifierGainMute(AmplifierGainMuteResponse),
+    ChannelStreamId(ChannelStreamIdResponse),
+    StreamFormat(StreamFormatResponse),
+    PinWidgetControl(PinWidgetControlResponse),
+    EAPDBTLEnable(EAPDBTLEnableResponse),
+    ConfigurationDefault(ConfigurationDefaultResponse),
     SetInfo,
 }
 
 #[derive(Debug, Getters)]
-pub struct VendorIdInfo {
+pub struct VendorIdResponse {
     device_id: u16,
     vendor_id: u16,
 }
 
-impl VendorIdInfo {
+impl VendorIdResponse {
     pub fn new(response: u32) -> Self {
-        VendorIdInfo {
+        Self {
             device_id: response.bitand(0xFFFF) as u16,
             vendor_id: (response >> 16).bitand(0xFFFF) as u16,
         }
@@ -49,28 +68,28 @@ impl VendorIdInfo {
     }
 }
 
-impl TryFrom<Info> for VendorIdInfo {
-    type Error = Info;
+impl TryFrom<Response> for VendorIdResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-                    Info::VendorId(info) => Ok(info),
+                    Response::VendorId(info) => Ok(info),
                     e => Err(e),
                 }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct RevisionIdInfo {
+pub struct RevisionIdResponse {
     stepping_id: u8,
     revision_id: u8,
     minor_revision: u8,
     major_revision: u8,
 }
 
-impl RevisionIdInfo {
+impl RevisionIdResponse {
     pub fn new(response: u32) -> Self {
-        RevisionIdInfo {
+        Self {
             stepping_id: response.bitand(0xFF) as u8,
             revision_id: (response >> 8).bitand(0xFF) as u8,
             minor_revision: (response >> 16).bitand(0xF) as u8,
@@ -79,26 +98,26 @@ impl RevisionIdInfo {
     }
 }
 
-impl TryFrom<Info> for RevisionIdInfo {
-    type Error = Info;
+impl TryFrom<Response> for RevisionIdResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::RevisionId(info) => Ok(info),
+            Response::RevisionId(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct SubordinateNodeCountInfo {
+pub struct SubordinateNodeCountResponse {
     total_number_of_nodes: u8,
     starting_node_number: u8,
 }
 
-impl SubordinateNodeCountInfo {
+impl SubordinateNodeCountResponse {
     pub fn new(response: u32) -> Self {
-        SubordinateNodeCountInfo {
+        Self {
             total_number_of_nodes: response.bitand(0xFF) as u8,
             starting_node_number: (response >> 16).bitand(0xFF) as u8,
         }
@@ -106,26 +125,26 @@ impl SubordinateNodeCountInfo {
     }
 }
 
-impl TryFrom<Info> for SubordinateNodeCountInfo {
-    type Error = Info;
+impl TryFrom<Response> for SubordinateNodeCountResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::SubordinateNodeCount(info) => Ok(info),
+            Response::SubordinateNodeCount(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct FunctionGroupTypeInfo {
+pub struct FunctionGroupTypeResponse {
     node_type: FunctionGroupType,
     unsolicited_response_capable: bool,
 }
 
-impl FunctionGroupTypeInfo {
+impl FunctionGroupTypeResponse {
     pub fn new(response: u32) -> Self {
-        FunctionGroupTypeInfo {
+        Self {
             node_type: match response.bitand(0xFF) as u8 {
                 0x1 => FunctionGroupType::AudioFunctionGroup,
                 0x2 => FunctionGroupType::VendorDefinedFunctionGroup,
@@ -138,12 +157,12 @@ impl FunctionGroupTypeInfo {
     }
 }
 
-impl TryFrom<Info> for FunctionGroupTypeInfo {
-    type Error = Info;
+impl TryFrom<Response> for FunctionGroupTypeResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::FunctionGroupType(info) => Ok(info),
+            Response::FunctionGroupType(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -157,15 +176,15 @@ pub enum FunctionGroupType {
 }
 
 #[derive(Debug, Getters)]
-pub struct AudioFunctionGroupCapabilitiesInfo {
+pub struct AudioFunctionGroupCapabilitiesResponse {
     output_delay: u8,
     input_delay: u8,
     beep_gen: bool,
 }
 
-impl AudioFunctionGroupCapabilitiesInfo {
+impl AudioFunctionGroupCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-    AudioFunctionGroupCapabilitiesInfo {
+        Self {
             output_delay: response.bitand(0xF) as u8,
             input_delay: (response >> 8).bitand(0xF) as u8,
             beep_gen: get_bit(response, 16),
@@ -173,19 +192,19 @@ impl AudioFunctionGroupCapabilitiesInfo {
     }
 }
 
-impl TryFrom<Info> for AudioFunctionGroupCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for AudioFunctionGroupCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::AudioFunctionGroupCapabilities(info) => Ok(info),
+            Response::AudioFunctionGroupCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct AudioWidgetCapabilitiesInfo {
+pub struct AudioWidgetCapabilitiesResponse {
     chan_count_lsb: bool,
     in_amp_present: bool,
     out_amp_present: bool,
@@ -204,9 +223,9 @@ pub struct AudioWidgetCapabilitiesInfo {
     widget_type: WidgetType,
 }
 
-impl AudioWidgetCapabilitiesInfo {
+impl AudioWidgetCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-        AudioWidgetCapabilitiesInfo {
+        Self {
             chan_count_lsb: get_bit(response, 0),
             in_amp_present: get_bit(response, 1),
             out_amp_present: get_bit(response, 2),
@@ -238,12 +257,12 @@ impl AudioWidgetCapabilitiesInfo {
     }
 }
 
-impl TryFrom<Info> for AudioWidgetCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for AudioWidgetCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::AudioWidgetCapabilities(info) => Ok(info),
+            Response::AudioWidgetCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -263,7 +282,7 @@ pub enum WidgetType {
 }
 
 #[derive(Debug, Getters)]
-pub struct SampleSizeRateCAPsInfo {
+pub struct SampleSizeRateCAPsResponse {
     support_8000hz: bool,
     support_11025hz: bool,
     support_16000hz: bool,
@@ -283,9 +302,9 @@ pub struct SampleSizeRateCAPsInfo {
     support_32bit: bool,
 }
 
-impl SampleSizeRateCAPsInfo {
+impl SampleSizeRateCAPsResponse {
     pub fn new(response: u32) -> Self {
-        SampleSizeRateCAPsInfo {
+        Self {
             support_8000hz: get_bit(response, 0),
             support_11025hz: get_bit(response, 1),
             support_16000hz: get_bit(response, 2),
@@ -307,27 +326,27 @@ impl SampleSizeRateCAPsInfo {
     }
 }
 
-impl TryFrom<Info> for SampleSizeRateCAPsInfo {
-    type Error = Info;
+impl TryFrom<Response> for SampleSizeRateCAPsResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::SampleSizeRateCAPs(info) => Ok(info),
+            Response::SampleSizeRateCAPs(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct SupportedStreamFormatsInfo {
+pub struct SupportedStreamFormatsResponse {
     pcm: bool,
     float32: bool,
     ac3: bool,
 }
 
-impl SupportedStreamFormatsInfo {
+impl SupportedStreamFormatsResponse {
     pub fn new(response: u32) -> Self {
-        SupportedStreamFormatsInfo {
+        Self {
             pcm: get_bit(response, 0),
             float32: get_bit(response, 1),
             ac3: get_bit(response, 2),
@@ -335,19 +354,19 @@ impl SupportedStreamFormatsInfo {
     }
 }
 
-impl TryFrom<Info> for SupportedStreamFormatsInfo {
-    type Error = Info;
+impl TryFrom<Response> for SupportedStreamFormatsResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::SupportedStreamFormats(info) => Ok(info),
+            Response::SupportedStreamFormats(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct PinCapabilitiesInfo {
+pub struct PinCapabilitiesResponse {
     impedence_sense_capable: bool,
     trigger_required: bool,
     presence_detect_capable: bool,
@@ -362,9 +381,9 @@ pub struct PinCapabilitiesInfo {
     high_bit_rate: bool,
 }
 
-impl PinCapabilitiesInfo {
+impl PinCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-        PinCapabilitiesInfo {
+        Self {
             impedence_sense_capable: get_bit(response, 0),
             trigger_required: get_bit(response, 1),
             presence_detect_capable: get_bit(response, 2),
@@ -381,28 +400,28 @@ impl PinCapabilitiesInfo {
     }
 }
 
-impl TryFrom<Info> for PinCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for PinCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::PinCapabilities(info) => Ok(info),
+            Response::PinCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct AmpCapabilitiesInfo {
+pub struct AmpCapabilitiesResponse {
     offset: u8,
     num_steps: u8,
     step_size: u8,
     mute_capable: bool,
 }
 
-impl AmpCapabilitiesInfo {
+impl AmpCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-        AmpCapabilitiesInfo {
+        Self {
             offset: response.bitand(0b0111_1111) as u8,
             num_steps: (response >> 8).bitand(0b0111_1111) as u8,
             step_size: (response >> 16).bitand(0b0111_1111) as u8,
@@ -411,46 +430,46 @@ impl AmpCapabilitiesInfo {
     }
 }
 
-impl TryFrom<Info> for AmpCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for AmpCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::InputAmpCapabilities(info) => Ok(info),
-            Info::OutputAmpCapabilities(info) => Ok(info),
+            Response::InputAmpCapabilities(info) => Ok(info),
+            Response::OutputAmpCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct ConnectionListLengthInfo {
+pub struct ConnectionListLengthResponse {
     connection_list_length: u8,
     long_form: bool,
 }
 
-impl ConnectionListLengthInfo {
+impl ConnectionListLengthResponse {
     pub fn new(response: u32) -> Self {
-        ConnectionListLengthInfo {
+        Self {
             connection_list_length: response.bitand(0b0111_1111) as u8,
             long_form: get_bit(response, 7),
         }
     }
 }
 
-impl TryFrom<Info> for ConnectionListLengthInfo {
-    type Error = Info;
+impl TryFrom<Response> for ConnectionListLengthResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ConnectionListLength(info) => Ok(info),
+            Response::ConnectionListLength(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct SupportedPowerStatesInfo {
+pub struct SupportedPowerStatesResponse {
     d0_sup: bool,
     d1_sup: bool,
     d2_sup: bool,
@@ -461,9 +480,9 @@ pub struct SupportedPowerStatesInfo {
     epss: bool,
 }
 
-impl SupportedPowerStatesInfo {
+impl SupportedPowerStatesResponse {
     pub fn new(response: u32) -> Self {
-        SupportedPowerStatesInfo {
+        Self {
             d0_sup: get_bit(response, 0),
             d1_sup: get_bit(response, 1),
             d2_sup: get_bit(response, 2),
@@ -476,45 +495,45 @@ impl SupportedPowerStatesInfo {
     }
 }
 
-impl TryFrom<Info> for SupportedPowerStatesInfo {
-    type Error = Info;
+impl TryFrom<Response> for SupportedPowerStatesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::SupportedPowerStates(info) => Ok(info),
+            Response::SupportedPowerStates(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct ProcessingCapabilitiesInfo {
+pub struct ProcessingCapabilitiesResponse {
     benign: bool,
     num_coeff: u8,
 }
 
-impl ProcessingCapabilitiesInfo {
+impl ProcessingCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-        ProcessingCapabilitiesInfo {
+        Self {
             benign: get_bit(response, 0),
             num_coeff: (response >> 8).bitand(0xFF) as u8,
         }
     }
 }
 
-impl TryFrom<Info> for ProcessingCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for ProcessingCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ProcessingCapabilities(info) => Ok(info),
+            Response::ProcessingCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct GPIOCountInfo {
+pub struct GPIOCountResponse {
     num_gpios: u8,
     num_gpos: u8,
     num_gpis: u8,
@@ -522,9 +541,9 @@ pub struct GPIOCountInfo {
     gpi_wake: bool,
 }
 
-impl GPIOCountInfo {
+impl GPIOCountResponse {
     pub fn new(response: u32) -> Self {
-        GPIOCountInfo {
+        Self {
             num_gpios: response.bitand(0xFF) as u8,
             num_gpos: (response >> 8).bitand(0xFF) as u8,
             num_gpis: (response >> 16).bitand(0xFF) as u8,
@@ -534,62 +553,62 @@ impl GPIOCountInfo {
     }
 }
 
-impl TryFrom<Info> for GPIOCountInfo {
-    type Error = Info;
+impl TryFrom<Response> for GPIOCountResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::GPIOCount(info) => Ok(info),
+            Response::GPIOCount(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct VolumeKnobCapabilitiesInfo {
+pub struct VolumeKnobCapabilitiesResponse {
     num_steps: u8,
     delta: bool,
 }
 
-impl VolumeKnobCapabilitiesInfo {
+impl VolumeKnobCapabilitiesResponse {
     pub fn new(response: u32) -> Self {
-        VolumeKnobCapabilitiesInfo {
+        Self {
             num_steps: response.bitand(0b0111_1111) as u8,
             delta: get_bit(response, 7),
         }
     }
 }
 
-impl TryFrom<Info> for VolumeKnobCapabilitiesInfo {
-    type Error = Info;
+impl TryFrom<Response> for VolumeKnobCapabilitiesResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::VolumeKnobCapabilities(info) => Ok(info),
+            Response::VolumeKnobCapabilities(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct ConnectionSelectInfo {
+pub struct ConnectionSelectResponse {
     currently_set_connection_index: u8,
 }
 
-impl ConnectionSelectInfo {
+impl ConnectionSelectResponse {
     pub fn new(response: u32) -> Self {
-        ConnectionSelectInfo {
+        Self {
             currently_set_connection_index: response.bitand(0xFF) as u8,
         }
     }
 }
 
-impl TryFrom<Info> for ConnectionSelectInfo {
-    type Error = Info;
+impl TryFrom<Response> for ConnectionSelectResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ConnectionSelect(info) => Ok(info),
+            Response::ConnectionSelect(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -598,16 +617,16 @@ impl TryFrom<Info> for ConnectionSelectInfo {
 
 // temporarily only short form implemented (see section 7.3.3.3 of the specification)
 #[derive(Debug, Getters)]
-pub struct ConnectionListEntryInfo {
+pub struct ConnectionListEntryResponse {
     connection_list_entry_at_offset_index: u8,
     connection_list_entry_at_offset_index_plus_one: u8,
     connection_list_entry_at_offset_index_plus_two: u8,
     connection_list_entry_at_offset_index_plus_three: u8,
 }
 
-impl ConnectionListEntryInfo {
+impl ConnectionListEntryResponse {
     pub fn new(response: u32) -> Self {
-        ConnectionListEntryInfo {
+        Self {
             connection_list_entry_at_offset_index: response.bitand(0xFF) as u8,
             connection_list_entry_at_offset_index_plus_one: (response >> 8).bitand(0xFF) as u8,
             connection_list_entry_at_offset_index_plus_two: (response >> 16).bitand(0xFF) as u8,
@@ -616,38 +635,38 @@ impl ConnectionListEntryInfo {
     }
 }
 
-impl TryFrom<Info> for ConnectionListEntryInfo {
-    type Error = Info;
+impl TryFrom<Response> for ConnectionListEntryResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ConnectionListEntry(info) => Ok(info),
+            Response::ConnectionListEntry(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct AmplifierGainMuteInfo {
+pub struct AmplifierGainMuteResponse {
     amplifier_gain: u8,
     amplifier_mute: bool,
 }
 
-impl AmplifierGainMuteInfo {
+impl AmplifierGainMuteResponse {
     pub fn new(response: u32) -> Self {
-        AmplifierGainMuteInfo {
+        Self {
             amplifier_gain: (response & 0b0111_1111) as u8,
             amplifier_mute: get_bit(response, 7),
         }
     }
 }
 
-impl TryFrom<Info> for AmplifierGainMuteInfo {
-    type Error = Info;
+impl TryFrom<Response> for AmplifierGainMuteResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::AmplifierGainMute(info) => Ok(info),
+            Response::AmplifierGainMute(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -680,7 +699,7 @@ pub enum SetAmplifierGainMuteSide {
 }
 
 #[derive(Debug, Getters)]
-pub struct StreamFormatInfo {
+pub struct StreamFormatResponse {
     number_of_channels: u8,
     bits_per_sample: BitsPerSample,
     sample_base_rate_divisor: u8,
@@ -689,14 +708,14 @@ pub struct StreamFormatInfo {
     stream_type: StreamType,
 }
 
-impl StreamFormatInfo {
+impl StreamFormatResponse {
     pub fn new(response: u32) -> Self {
         let sample_base_rate_multiple = (response >> 11).bitand(0b111) as u8 + 1;
         if sample_base_rate_multiple > 4 {
             panic!("Unsupported sample rate base multiple, see table 53 in section 3.7.1: Stream Format Structure of the specification");
         }
 
-        StreamFormatInfo {
+        Self {
             number_of_channels: (response.bitand(0xF) as u8) + 1,
             bits_per_sample: match (response >> 4).bitand(0b111) {
                 0b000 => BitsPerSample::Eight,
@@ -713,39 +732,14 @@ impl StreamFormatInfo {
             stream_type: if get_bit(response, 15) { StreamType::NonPCM } else { StreamType::PCM },
         }
     }
-
-    pub fn as_u16(&self) -> u16 {
-        let number_of_channels = self.number_of_channels - 1;
-        let bits_per_sample = match self.bits_per_sample {
-            BitsPerSample::Eight => 0b000,
-            BitsPerSample::Sixteen => 0b001,
-            BitsPerSample::Twenty => 0b010,
-            BitsPerSample::Twentyfour => 0b011,
-            BitsPerSample::Thirtytwo => 0b100,
-            _ => panic!("This arm should be unreachable as the only constructor of StreamFormatInfo doesn't let you create an instance with invalid values for bit depth")
-        };
-        let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
-        let sample_base_rate_multiple = self.sample_base_rate_multiple - 1;
-        let sample_base_rate = if self.sample_base_rate == 44100 { 1 } else { 0 };
-        let stream_type = match self.stream_type {
-            StreamType::PCM => 0,
-            StreamType::NonPCM => 1,
-        };
-        (stream_type as u16) << 15
-            | (sample_base_rate as u16) << 14
-            | (sample_base_rate_multiple as u16) << 11
-            | (sample_base_rate_divisor as u16) << 8
-            | (bits_per_sample as u16) << 4
-            | number_of_channels as u16
-    }
 }
 
-impl TryFrom<Info> for StreamFormatInfo {
-    type Error = Info;
+impl TryFrom<Response> for StreamFormatResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::StreamFormat(info) => Ok(info),
+            Response::StreamFormat(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -767,37 +761,33 @@ pub enum StreamType {
 }
 
 #[derive(Debug, Getters)]
-pub struct ChannelStreamIdInfo {
+pub struct ChannelStreamIdResponse {
     channel: u8,
     stream: u8,
 }
 
-impl ChannelStreamIdInfo {
+impl ChannelStreamIdResponse {
     pub fn new(response: u32) -> Self {
-        ChannelStreamIdInfo {
+        Self {
             channel: response.bitand(0xF) as u8,
             stream: (response >> 4).bitand(0xF) as u8,
         }
     }
-
-    pub fn as_u8(&self) -> u8 {
-        (self.stream << 4) | self.channel
-    }
 }
 
-impl TryFrom<Info> for ChannelStreamIdInfo {
-    type Error = Info;
+impl TryFrom<Response> for ChannelStreamIdResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ChannelStreamId(info) => Ok(info),
+            Response::ChannelStreamId(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct PinWidgetControlInfo {
+pub struct PinWidgetControlResponse {
     // Voltage Reference Enable applies only to non-digital pin widgets (see section 7.3.3.13 of the specification)
     // for digital pin widgets (e.g. HDMI and Display Port), the same bits represent Encoded Packet Type instead
     // but a case distinction is not implemented yet so this code will fail for digital pin widgets
@@ -807,9 +797,9 @@ pub struct PinWidgetControlInfo {
     h_phn_enable: bool,
 }
 
-impl PinWidgetControlInfo {
+impl PinWidgetControlResponse {
     pub fn new(response: u32) -> Self {
-        PinWidgetControlInfo {
+        Self {
             voltage_reference_enable: match response.bitand(0b111) {
                 0b000 => VoltageReferenceSignalLevel::HiZ,
                 0b001 => VoltageReferenceSignalLevel::FiftyPercent,
@@ -825,25 +815,14 @@ impl PinWidgetControlInfo {
             h_phn_enable: get_bit(response, 7),
         }
     }
-
-    pub fn as_u8(&self) -> u8 {
-        let voltage_reference_enable = match self.voltage_reference_enable {
-            VoltageReferenceSignalLevel::HiZ => 0b000,
-            VoltageReferenceSignalLevel::FiftyPercent => 0b001,
-            VoltageReferenceSignalLevel::Ground0V => 0b010,
-            VoltageReferenceSignalLevel::EightyPercent => 0b100,
-            VoltageReferenceSignalLevel::HundredPercent => 0b101,
-        };
-        (self.h_phn_enable as u8) << 7 | (self.out_enable as u8) << 6 | (self.in_enable as u8) << 5 | voltage_reference_enable
-    }
 }
 
-impl TryFrom<Info> for PinWidgetControlInfo {
-    type Error = Info;
+impl TryFrom<Response> for PinWidgetControlResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::PinWidgetControl(info) => Ok(info),
+            Response::PinWidgetControl(info) => Ok(info),
             e => Err(e),
         }
     }
@@ -859,39 +838,35 @@ pub enum VoltageReferenceSignalLevel {
 }
 
 #[derive(Debug, Getters)]
-pub struct EAPDBTLEnableInfo {
+pub struct EAPDBTLEnableResponse {
     btl_enable: bool,
     eapd_enable: bool,
     lr_swap: bool,
 }
 
-impl EAPDBTLEnableInfo {
+impl EAPDBTLEnableResponse {
     pub fn new(response: u32) -> Self {
-        EAPDBTLEnableInfo {
+        Self {
             btl_enable: get_bit(response, 0),
             eapd_enable: get_bit(response, 1),
             lr_swap: get_bit(response, 2),
         }
     }
-
-    pub fn as_u8(&self) -> u8 {
-        (self.btl_enable as u8) << 2 | (self.eapd_enable as u8) << 1 | self.lr_swap as u8
-    }
 }
 
-impl TryFrom<Info> for EAPDBTLEnableInfo {
-    type Error = Info;
+impl TryFrom<Response> for EAPDBTLEnableResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::EAPDBTLEnable(info) => Ok(info),
+            Response::EAPDBTLEnable(info) => Ok(info),
             e => Err(e),
         }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct ConfigurationDefaultInfo {
+pub struct ConfigurationDefaultResponse {
     sequence: u8,
     default_association: u8,
     jack_detect_override: bool,
@@ -903,7 +878,7 @@ pub struct ConfigurationDefaultInfo {
     port_connectivity: ConfigDefPortConnectivity,
 }
 
-impl ConfigurationDefaultInfo {
+impl ConfigurationDefaultResponse {
     pub fn new(response: u32) -> Self {
         let gross_location = match (response >> 28).bitand(0b11) {
             0b00 => ConfigDefGrossLocation::ExternalOnPrimaryChassis,
@@ -913,7 +888,7 @@ impl ConfigurationDefaultInfo {
             _ => panic!("This arm can never be reached as all cases are covered")
         };
 
-        ConfigurationDefaultInfo {
+        Self {
             sequence: response.bitand(0xF) as u8,
             default_association: (response >> 4).bitand(0xF) as u8,
             jack_detect_override: get_bit(response, 8),
@@ -1009,12 +984,12 @@ impl ConfigurationDefaultInfo {
     }
 }
 
-impl TryFrom<Info> for ConfigurationDefaultInfo {
-    type Error = Info;
+impl TryFrom<Response> for ConfigurationDefaultResponse {
+    type Error = Response;
 
-    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
         match info_wrapped {
-            Info::ConfigurationDefault(info) => Ok(info),
+            Response::ConfigurationDefault(info) => Ok(info),
             e => Err(e),
         }
     }
