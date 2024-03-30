@@ -24,15 +24,12 @@ pub enum Info {
 
     ConnectionSelect(ConnectionSelectInfo),
     ConnectionListEntry(ConnectionListEntryInfo),
-
+    AmplifierGainMute(AmplifierGainMuteInfo),
     ChannelStreamId(ChannelStreamIdInfo),
-
     StreamFormat(StreamFormatInfo),
-
     PinWidgetControl(PinWidgetControlInfo),
-
+    EAPDBTLEnable(EAPDBTLEnableInfo),
     ConfigurationDefault(ConfigurationDefaultInfo),
-
     SetInfo,
 }
 
@@ -631,9 +628,61 @@ impl TryFrom<Info> for ConnectionListEntryInfo {
 }
 
 #[derive(Debug, Getters)]
+pub struct AmplifierGainMuteInfo {
+    amplifier_gain: u8,
+    amplifier_mute: bool,
+}
+
+impl AmplifierGainMuteInfo {
+    pub fn new(response: u32) -> Self {
+        AmplifierGainMuteInfo {
+            amplifier_gain: (response & 0b0111_1111) as u8,
+            amplifier_mute: get_bit(response, 7),
+        }
+    }
+}
+
+impl TryFrom<Info> for AmplifierGainMuteInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::AmplifierGainMute(info) => Ok(info),
+            e => Err(e),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum GetAmplifierGainMuteType {
+    Input,
+    Output,
+}
+
+#[derive(Debug)]
+pub enum GetAmplifierGainMuteSide {
+    Right,
+    Left,
+}
+
+#[derive(Debug)]
+pub enum SetAmplifierGainMuteType {
+    Input,
+    Output,
+    Both,
+}
+
+#[derive(Debug)]
+pub enum SetAmplifierGainMuteSide {
+    Right,
+    Left,
+    Both,
+}
+
+#[derive(Debug, Getters)]
 pub struct StreamFormatInfo {
     number_of_channels: u8,
-    bits_per_sample: u8,
+    bits_per_sample: BitsPerSample,
     sample_base_rate_divisor: u8,
     sample_base_rate_multiple: u8,
     sample_base_rate: u16,
@@ -650,11 +699,11 @@ impl StreamFormatInfo {
         StreamFormatInfo {
             number_of_channels: (response.bitand(0xF) as u8) + 1,
             bits_per_sample: match (response >> 4).bitand(0b111) {
-                0b000 => 8,
-                0b001 => 16,
-                0b010 => 20,
-                0b011 => 24,
-                0b100 => 32,
+                0b000 => BitsPerSample::Eight,
+                0b001 => BitsPerSample::Sixteen,
+                0b010 => BitsPerSample::Twenty,
+                0b011 => BitsPerSample::Twentyfour,
+                0b100 => BitsPerSample::Thirtytwo,
                 // 0b101 to 0b111 reserved
                 _ => panic!("Unsupported bit depth, see table 53 in section 3.7.1: Stream Format Structure of the specification")
             },
@@ -668,11 +717,11 @@ impl StreamFormatInfo {
     pub fn as_u16(&self) -> u16 {
         let number_of_channels = self.number_of_channels - 1;
         let bits_per_sample = match self.bits_per_sample {
-            8 => 0b000,
-            16 => 0b001,
-            20 => 0b010,
-            24 => 0b011,
-            32 => 0b100,
+            BitsPerSample::Eight => 0b000,
+            BitsPerSample::Sixteen => 0b001,
+            BitsPerSample::Twenty => 0b010,
+            BitsPerSample::Twentyfour => 0b011,
+            BitsPerSample::Thirtytwo => 0b100,
             _ => panic!("This arm should be unreachable as the only constructor of StreamFormatInfo doesn't let you create an instance with invalid values for bit depth")
         };
         let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
@@ -700,6 +749,21 @@ impl TryFrom<Info> for StreamFormatInfo {
             e => Err(e),
         }
     }
+}
+
+#[derive(Debug)]
+pub enum BitsPerSample {
+    Eight,
+    Sixteen,
+    Twenty,
+    Twentyfour,
+    Thirtytwo,
+}
+
+#[derive(Debug)]
+pub enum StreamType {
+    PCM,
+    NonPCM,
 }
 
 #[derive(Debug, Getters)]
@@ -730,12 +794,6 @@ impl TryFrom<Info> for ChannelStreamIdInfo {
             e => Err(e),
         }
     }
-}
-
-#[derive(Debug)]
-pub enum StreamType {
-    PCM,
-    NonPCM,
 }
 
 #[derive(Debug, Getters)]
@@ -798,6 +856,38 @@ pub enum VoltageReferenceSignalLevel {
     Ground0V,
     EightyPercent,
     HundredPercent,
+}
+
+#[derive(Debug, Getters)]
+pub struct EAPDBTLEnableInfo {
+    btl_enable: bool,
+    eapd_enable: bool,
+    lr_swap: bool,
+}
+
+impl EAPDBTLEnableInfo {
+    pub fn new(response: u32) -> Self {
+        EAPDBTLEnableInfo {
+            btl_enable: get_bit(response, 0),
+            eapd_enable: get_bit(response, 1),
+            lr_swap: get_bit(response, 2),
+        }
+    }
+
+    pub fn as_u8(&self) -> u8 {
+        (self.btl_enable as u8) << 2 | (self.eapd_enable as u8) << 1 | self.lr_swap as u8
+    }
+}
+
+impl TryFrom<Info> for EAPDBTLEnableInfo {
+    type Error = Info;
+
+    fn try_from(info_wrapped: Info) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Info::EAPDBTLEnable(info) => Ok(info),
+            e => Err(e),
+        }
+    }
 }
 
 #[derive(Debug, Getters)]
