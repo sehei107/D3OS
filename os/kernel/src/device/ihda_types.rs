@@ -1,9 +1,12 @@
+#![allow(dead_code)]
+
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
 use log::{debug, info};
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
+use x86_64::structures::paging::PhysFrame;
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command};
 use crate::device::pit::Timer;
 use crate::{memory, timer};
@@ -12,6 +15,9 @@ const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
 const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const MAX_AMOUNT_OF_BIDRECTIONAL_STREAMS: u8 = 30;
+const MAX_AMOUNT_OF_SDIN_SIGNALS: u8 = 15;
+// TIMEOUT values arbitrarily chosen
+const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
@@ -239,7 +245,7 @@ impl RegisterInterface {
         }
     }
 
-    // GCAP
+    // ########## GCAP ##########
     pub fn supports_64bit_bdl_addresses(&self) -> bool {
         self.gcap.assert_bit(0)
     }
@@ -269,29 +275,28 @@ impl RegisterInterface {
         ((self.gcap.read() >> 12) & 0xF) as u8
     }
 
-    // VMIN and VMAJ
+    // ########## VMIN and VMAJ ##########
     pub fn specification_version(&self) -> (u8, u8) {
         (self.vmaj.read(), self.vmin.read())
     }
 
-    // OUTPAY
+    // ########## OUTPAY ##########
     pub fn output_payload_capacity_in_words(&self) -> u16 {
         self.outpay.read()
     }
 
-    // INPAY
+    // ########## INPAY ##########
     pub fn input_payload_capacity_in_words(&self) -> u16 {
         self.inpay.read()
     }
 
-    // GCTL
+    // ########## GCTL ##########
     pub fn reset_controller(&self) {
-        self.gctl().set_bit(0);
+        self.gctl.set_bit(0);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        const CRST_TIMEOUT: usize = 100;
-        while !self.gctl().assert_bit(0) {
-            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
+        while !self.gctl.assert_bit(0) {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("IHDA controller reset timed out")
             }
         }
@@ -300,7 +305,7 @@ impl RegisterInterface {
         Timer::wait(1);
     }
 
-    // pub fn initiate_flush()
+    // pub fn initiate_flush();
 
     pub fn assert_unsol_bit(&self) -> bool {
         self.gctl.assert_bit(8)
@@ -314,8 +319,246 @@ impl RegisterInterface {
         self.gctl.clear_bit(8);
     }
 
+    // ########## WAKEEN ##########
+
+    pub fn assert_sdin_wake_enable_bit(&self, sdin_index: u8) -> bool {
+        if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
+        self.wakeen.assert_bit(sdin_index)
+    }
+
+    pub fn set_sdin_wake_enable_bit(&self, sdin_index : u8) {
+        if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
+        self.wakeen.set_bit(sdin_index);
+    }
+
+    pub fn clear_sdin_wake_enable_bit(&self, sdin_index : u8) {
+        if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
+        self.wakeen.clear_bit(sdin_index);
+    }
+
+    // ########## WAKESTS ##########
+
+    pub fn assert_sdin_state_change_status_bit(&self, sdin_index: u8) -> bool {
+        if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
+        self.wakests.assert_bit(sdin_index)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
+    pub fn clear_sdin_state_change_status_bit(&self, sdin_index : u8) {
+        if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
+        self.wakests.set_bit(sdin_index);
+    }
+
+    // ########## GSTS ##########
+
+    pub fn assert_flush_status_bit(&self) -> bool {
+        self.gsts.assert_bit(1)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
+    pub fn clear_flush_status_bit(&self) {
+        self.gctl.set_bit(1);
+    }
+
+    // ########## OUTSTRMPAY ##########
+    pub fn output_stream_payload_capability_in_words(&self) -> u16 {
+        self.outstrmpay.read()
+    }
+
+    // ########## INSTRMPAY ##########
+    pub fn input_stream_payload_capability_in_words(&self) -> u16 {
+        self.instrmpay.read()
+    }
+
+    // ########## INTCTL ##########
+
+    // pub fn assert_stream_interrupt_enable_bit(&self) -> bool;
+    //
+    // pub fn set_stream_interrupt_enable_bit(&self);
+    //
+    // pub fn clear_stream_interrupt_enable_bit(&self);
+
+    pub fn assert_controller_interrupt_enable_bit(&self) -> bool {
+        self.intctl.assert_bit(30)
+    }
+
+    pub fn set_controller_interrupt_enable_bit(&self) {
+        self.intctl.set_bit(30);
+    }
+
+    pub fn clear_controller_interrupt_enable_bit(&self) {
+        self.intctl.clear_bit(30);
+    }
+
+    pub fn assert_global_interrupt_enable_bit(&self) -> bool {
+        self.intctl.assert_bit(31)
+    }
+
+    pub fn set_global_interrupt_enable_bit(&self) {
+        self.intctl.set_bit(31);
+    }
+
+    pub fn clear_global_interrupt_enable_bit(&self) {
+        self.intctl.clear_bit(31);
+    }
+
+    // ########## INTCTL ##########
+
+    // not implemented yet
+
+    // ########## WALCLK ##########
+
+    pub fn wall_clock_counter(&self) -> u32 {
+        self.walclk.read()
+    }
+
+    // ########## SSYNC ##########
+
+    // not implemented yet
+
+    // ########## CORBLBASE and CORBUBASE ##########
+
+    pub fn set_corb_address(&self, start_frame: PhysFrame) {
+        // _TODO_: assert that the DMA engine is not running before writing to CORBLASE and CORBUBASE (see specification, section 3.3.18 and 3.3.19)
+        let start_address = start_frame.start_address().as_u64();
+        let lbase = (start_address & 0xFFFFFFFF) as u32;
+        let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+        self.corblbase.write(lbase);
+        self.corbubase.write(ubase);
+    }
+
+    // ########## CORBWP ##########
+
+    fn get_current_corb_write_pointer_offset(&self) -> u8 {
+        (self.corbwp.read() & 0xFF) as u8
+    }
+
+    fn set_corb_write_pointer_offset(&self, offset: u8) {
+        self.corbwp.write(offset as u16);
+    }
+
+    // ########## CORBRP ##########
+
+    fn get_current_corb_read_pointer_offset(&self) -> u8 {
+        (self.corbrp.read() & 0xFF) as u8
+    }
+
+    fn reset_corb_read_pointer(&self) {
+        self.corbrp().set_bit(15);
+        let start_timer = timer().read().systime_ms();
+        // value for CORBRPRST_TIMEOUT arbitrarily chosen
+        
+        while self.corbrp().read() != 0x0 {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
+                panic!("CORB read pointer reset timed out")
+            }
+        }
+        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
+        // actually you are supposed to read a 1 back from bit 15
+        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
+        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
+        // this is why the code now just checks if the register contains the value 0 after the reset
+        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
+    }
+
+    // ########## CORBCTL ##########
+
+    pub fn assert_corb_memory_error_interrupt_enable_bit(&self) -> bool {
+        self.corbctl.assert_bit(0)
+    }
+
+    pub fn set_corb_memory_error_interrupt_enable_bit(&self) {
+        self.corbctl.set_bit(0);
+    }
+
+    pub fn clear_corb_memory_error_interrupt_enable_bit(&self) {
+        self.corbctl.clear_bit(0);
+    }
+
+    pub fn start_corb_dma(&self) {
+        self.corbctl.set_bit(1);
+        
+        // software must read back value (see specification, section 3.3.22)
+        let start_timer = timer().read().systime_ms();
+        while !self.corbctl.assert_bit(1) {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
+                panic!("IHDA controller reset timed out")
+            }
+        }
+    }
+
+    pub fn stop_corb_dma(&self) {
+        self.corbctl.clear_bit(1);
+
+        // software must read back value (see specification, section 3.3.22)
+        let start_timer = timer().read().systime_ms();
+        while self.corbctl.assert_bit(1) {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
+                panic!("IHDA controller reset timed out")
+            }
+        }
+    }
+
+    // ########## CORBSTS ##########
+
+    pub fn assert_corb_memory_error_indication_bit(&self) -> bool {
+        self.corbsts.assert_bit(0)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
+    pub fn clear_corb_memory_error_indication_bit(&self) {
+        self.corbsts.set_bit(0);
+    }
+
+    // ########## CORBSIZE ##########
+
+    pub fn corb_size_in_entries(&self) -> CorbSize {
+        match (self.corbsize.read()) & 0b11 {
+            0b00 => CorbSize::TwoEntries,
+            0b01 => CorbSize::SixteenEntries,
+            0b10 => CorbSize::TwoHundredFiftySixEntries,
+            _ => panic!("IHDA sound card reports an invalid CORB size")
+        }
+    }
+
+    pub fn set_corb_size_in_entries(&self, corb_size: CorbSize) {
+        match corb_size {
+            CorbSize::TwoEntries => self.corbsize.write(self.corbsize.read() & 0b1111_11_00),
+            CorbSize::SixteenEntries => self.corbsize.write(self.corbsize.read() & 0b1111_11_00 | 0b01),
+            CorbSize::TwoHundredFiftySixEntries => self.corbsize.write(self.corbsize.read() & 0b1111_11_00 | 0b10),
+        }
+    }
+
+    pub fn corb_size_capability(&self) -> CorbSizeCapability {
+        CorbSizeCapability::new(
+            self.corbsize.assert_bit(4),
+            self.corbsize.assert_bit(5),
+            self.corbsize.assert_bit(6),
+        )
+    }
 
 
+
+    // _TODO_: Whole RIRB implementation
+
+
+
+    // ########## DPLBASE and DPUBASE ##########
+
+    pub fn set_dma_position_buffer_address(&self, start_frame: PhysFrame) {
+        // _TODO_: assert that the DMA engine is not running before writing to DPLASE and DPUBASE (see specification, section 3.3.18 and 3.3.19)
+        let start_address = start_frame.start_address().as_u64();
+        let lbase = (start_address & 0xFFFFFFFF) as u32;
+        let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+        self.dpiblbase.write(lbase);
+        self.dpibubase.write(ubase);
+    }
+
+    
+    
+    // _TODO_: review the following functions until end of impl block and use functions above instead of direct reads and writes
 
     fn immediate_command(&self, command: &Command) -> RawResponse {
         self.icis().write(0b10);
@@ -356,12 +599,7 @@ impl RegisterInterface {
         let corb_frame_range = memory::physical::alloc(1);
         match corb_frame_range {
             PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-
-                self.corblbase().write(lbase);
-                self.corbubase().write(ubase);
+                self.set_corb_address(start);
             }
         }
 
@@ -374,6 +612,7 @@ impl RegisterInterface {
         self.corbwp().clear_all_bits();
 
         //reset CORBRP
+        self.reset_corb_read_pointer();
         self.corbrp().set_bit(15);
         let start_timer = timer().read().systime_ms();
         // value for CORBRPRST_TIMEOUT arbitrarily chosen
@@ -430,17 +669,39 @@ impl RegisterInterface {
     }
 }
 
-// #[derive(Debug)]
-// pub enum Bit {
-//     UNSOL,
-//     FCNTRL,
-//     CRST,
-//     SDIWEN(u8),
-//     GIE,
-//     CIE,
-//     SIE(u8),
-//     SSYNC(u8),
-// }
+#[derive(Debug)]
+pub enum CorbSize {
+    TwoEntries,
+    SixteenEntries,
+    TwoHundredFiftySixEntries,
+}
+
+impl CorbSize {
+    fn as_u16(&self) -> u16 {
+        match self {
+            CorbSize::TwoEntries => 2,
+            CorbSize::SixteenEntries => 16,
+            CorbSize::TwoHundredFiftySixEntries => 256,
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct CorbSizeCapability {
+    support_two_entries: bool,
+    support_sixteen_entries: bool,
+    support_two_hundred_fifty_six_entries: bool,
+}
+
+impl CorbSizeCapability {
+    fn new(support_two_entries: bool, support_sixteen_entries: bool, support_two_hundred_fifty_six_entries: bool) -> Self {
+        Self {
+            support_two_entries,
+            support_sixteen_entries,
+            support_two_hundred_fifty_six_entries,
+        }
+    }
+}
 
 
 #[derive(Clone, Debug, Getters)]
