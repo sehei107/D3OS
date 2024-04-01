@@ -268,14 +268,14 @@ impl RegisterInterface {
         }
     }
 
-    pub fn send_command(&self, addr: &NodeAddress, command: &Command) -> Response {
-        let parsed_command = CommandBuilder::build_command(&addr, command);
+    pub fn send_command(&self, command: &Command) -> Response {
+        let parsed_command = CommandBuilder::build_command(command);
         let response = self.crs.immediate_command(parsed_command);
         ResponseParser::parse_response(response, command)
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Clone, Debug, Getters)]
 pub struct NodeAddress {
     codec_address: u8,
     node_id: u8,
@@ -462,25 +462,25 @@ pub enum WidgetInfoContainer {
 pub struct CommandBuilder;
 
 impl CommandBuilder {
-    pub fn build_command(node_address: &NodeAddress, command: &Command) -> u32 {
+    pub fn build_command(command: &Command) -> u32 {
         match command {
-            Command::GetParameter(parameter) => Self::command_with_12bit_identifier_verb(node_address, command.id(), parameter.id()),
-            Command::GetConnectionSelect => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetConnectionSelect(payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.connection_index()),
-            Command::GetConnectionListEntry(payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.offset()),
-            Command::GetAmplifierGainMute(payload)
+            Command::GetParameter(node_address, parameter) => Self::command_with_12bit_identifier_verb(node_address, command.id(), parameter.id()),
+            Command::GetConnectionSelect(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.connection_index()),
+            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.offset()),
+            Command::GetAmplifierGainMute(node_address, payload)
                 => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_get_amplifier_gain_mute(payload.amp_type(), payload.side(), *payload.index())),
-            Command::SetAmplifierGainMute(payload)
+            Command::SetAmplifierGainMute(node_address, payload)
                 => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_set_amplifier_gain_mute(payload.amp_type(), payload.side(), *payload.index(), *payload.mute(), *payload.gain())),
-            Command::GetStreamFormat => Self::command_with_4bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetStreamFormat(payload) => Self::command_with_4bit_identifier_verb(node_address, command.id(), payload.as_u16()),
-            Command::GetChannelStreamId => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetChannelStreamId(payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetPinWidgetControl => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetPinWidgetControl(payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetEAPDBTLEnable => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetEAPDBTLEnable(payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetConfigurationDefault => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::GetStreamFormat(node_address) => Self::command_with_4bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetStreamFormat(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, command.id(), payload.as_u16()),
+            Command::GetChannelStreamId(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetChannelStreamId(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
+            Command::GetPinWidgetControl(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetPinWidgetControl(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
+            Command::GetEAPDBTLEnable(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
+            Command::SetEAPDBTLEnable(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
+            Command::GetConfigurationDefault(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
         }
     }
 
@@ -534,41 +534,41 @@ impl CommandBuilder {
 
 #[derive(Debug)]
 pub enum Command {
-    GetParameter(Parameter),
-    GetConnectionSelect,
-    SetConnectionSelect(SetConnectionSelectPayload),
-    GetConnectionListEntry(GetConnectionListEntryPayload),
-    GetAmplifierGainMute(GetAmplifierGainMutePayload),
-    SetAmplifierGainMute(SetAmplifierGainMutePayload),
-    GetStreamFormat,
-    SetStreamFormat(SetStreamFormatPayload),
-    GetChannelStreamId,
-    SetChannelStreamId(SetChannelStreamIdPayload),
-    GetPinWidgetControl,
-    SetPinWidgetControl(SetPinWidgetControlPayload),
-    GetEAPDBTLEnable,
-    SetEAPDBTLEnable(SetEAPDBTLEnablePayload),
-    GetConfigurationDefault,
+    GetParameter(NodeAddress, Parameter),
+    GetConnectionSelect(NodeAddress),
+    SetConnectionSelect(NodeAddress, SetConnectionSelectPayload),
+    GetConnectionListEntry(NodeAddress, GetConnectionListEntryPayload),
+    GetAmplifierGainMute(NodeAddress, GetAmplifierGainMutePayload),
+    SetAmplifierGainMute(NodeAddress, SetAmplifierGainMutePayload),
+    GetStreamFormat(NodeAddress),
+    SetStreamFormat(NodeAddress, SetStreamFormatPayload),
+    GetChannelStreamId(NodeAddress),
+    SetChannelStreamId(NodeAddress, SetChannelStreamIdPayload),
+    GetPinWidgetControl(NodeAddress),
+    SetPinWidgetControl(NodeAddress, SetPinWidgetControlPayload),
+    GetEAPDBTLEnable(NodeAddress),
+    SetEAPDBTLEnable(NodeAddress, SetEAPDBTLEnablePayload),
+    GetConfigurationDefault(NodeAddress),
 }
 
 impl Command {
     pub fn id(&self) -> u16 {
         match self {
-            Command::GetParameter(_) => 0xF00,
-            Command::GetConnectionSelect => 0xF01,
-            Command::SetConnectionSelect { .. } => 0x701,
-            Command::GetConnectionListEntry { .. } => 0xF02,
-            Command::GetAmplifierGainMute { .. } => 0xB,
-            Command::SetAmplifierGainMute { .. } => 0x3,
-            Command::GetStreamFormat => 0xA,
-            Command::SetStreamFormat(_) => 0x2,
-            Command::GetChannelStreamId => 0xF06,
-            Command::SetChannelStreamId(_) => 0x706,
-            Command::GetPinWidgetControl => 0xF07,
-            Command::SetPinWidgetControl(_) => 0x707,
-            Command::GetEAPDBTLEnable => 0xF0C,
-            Command::SetEAPDBTLEnable(_) => 0x70C,
-            Command::GetConfigurationDefault => 0xF1C,
+            Command::GetParameter(..) => 0xF00,
+            Command::GetConnectionSelect(..) => 0xF01,
+            Command::SetConnectionSelect(..) => 0x701,
+            Command::GetConnectionListEntry(..) => 0xF02,
+            Command::GetAmplifierGainMute(..) => 0xB,
+            Command::SetAmplifierGainMute(..) => 0x3,
+            Command::GetStreamFormat(..) => 0xA,
+            Command::SetStreamFormat(..) => 0x2,
+            Command::GetChannelStreamId(..) => 0xF06,
+            Command::SetChannelStreamId(..) => 0x706,
+            Command::GetPinWidgetControl(..) => 0xF07,
+            Command::SetPinWidgetControl(..) => 0x707,
+            Command::GetEAPDBTLEnable(..) => 0xF0C,
+            Command::SetEAPDBTLEnable(..) => 0x70C,
+            Command::GetConfigurationDefault(..) => 0xF1C,
         }
     }
 }
@@ -719,7 +719,6 @@ impl SetStreamFormatPayload {
             BitsPerSample::Twenty => 0b010,
             BitsPerSample::Twentyfour => 0b011,
             BitsPerSample::Thirtytwo => 0b100,
-            _ => panic!("This arm should be unreachable as the only constructor of StreamFormatInfo doesn't let you create an instance with invalid values for bit depth")
         };
         let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
         let sample_base_rate_multiple = self.sample_base_rate_multiple - 1;
@@ -841,7 +840,7 @@ pub struct ResponseParser;
 impl ResponseParser {
     pub fn parse_response(response: u32, command: &Command) -> Response {
         match command {
-            Command::GetParameter(parameter) => {
+            Command::GetParameter(_, parameter) => {
                 match parameter {
                     Parameter::VendorId => Response::VendorId(VendorIdResponse::new(response)),
                     Parameter::RevisionId => Response::RevisionId(RevisionIdResponse::new(response)),
@@ -861,20 +860,20 @@ impl ResponseParser {
                     Parameter::VolumeKnobCapabilities => Response::VolumeKnobCapabilities(VolumeKnobCapabilitiesResponse::new(response)),
                 }
             }
-            Command::GetConnectionSelect => Response::ConnectionSelect(ConnectionSelectResponse::new(response)),
-            Command::SetConnectionSelect { .. } => Response::SetInfo,
-            Command::GetConnectionListEntry { .. } => Response::ConnectionListEntry(ConnectionListEntryResponse::new(response)),
-            Command::GetAmplifierGainMute { .. } => Response::AmplifierGainMute(AmplifierGainMuteResponse::new(response)),
-            Command::SetAmplifierGainMute { .. } => Response::SetInfo,
-            Command::GetStreamFormat { .. } => Response::StreamFormat(StreamFormatResponse::new(response)),
-            Command::SetStreamFormat { .. } => Response::SetInfo,
-            Command::GetChannelStreamId => Response::ChannelStreamId(ChannelStreamIdResponse::new(response)),
-            Command::SetChannelStreamId(_) => Response::SetInfo,
-            Command::GetPinWidgetControl => Response::PinWidgetControl(PinWidgetControlResponse::new(response)),
-            Command::SetPinWidgetControl { .. } => Response::SetInfo,
-            Command::GetEAPDBTLEnable => Response::EAPDBTLEnable(EAPDBTLEnableResponse::new(response)),
-            Command::SetEAPDBTLEnable(_) => Response::SetInfo,
-            Command::GetConfigurationDefault => Response::ConfigurationDefault(ConfigurationDefaultResponse::new(response)),
+            Command::GetConnectionSelect(..) => Response::ConnectionSelect(ConnectionSelectResponse::new(response)),
+            Command::SetConnectionSelect(..) => Response::SetInfo,
+            Command::GetConnectionListEntry(..) => Response::ConnectionListEntry(ConnectionListEntryResponse::new(response)),
+            Command::GetAmplifierGainMute(..) => Response::AmplifierGainMute(AmplifierGainMuteResponse::new(response)),
+            Command::SetAmplifierGainMute(..) => Response::SetInfo,
+            Command::GetStreamFormat(..) => Response::StreamFormat(StreamFormatResponse::new(response)),
+            Command::SetStreamFormat(..) => Response::SetInfo,
+            Command::GetChannelStreamId(..) => Response::ChannelStreamId(ChannelStreamIdResponse::new(response)),
+            Command::SetChannelStreamId(..) => Response::SetInfo,
+            Command::GetPinWidgetControl(..) => Response::PinWidgetControl(PinWidgetControlResponse::new(response)),
+            Command::SetPinWidgetControl(..) => Response::SetInfo,
+            Command::GetEAPDBTLEnable(..) => Response::EAPDBTLEnable(EAPDBTLEnableResponse::new(response)),
+            Command::SetEAPDBTLEnable(..) => Response::SetInfo,
+            Command::GetConfigurationDefault(..) => Response::ConfigurationDefault(ConfigurationDefaultResponse::new(response)),
         }
     }
 }
