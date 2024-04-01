@@ -502,8 +502,8 @@ impl Command {
         match self {
             Command::GetParameter(node_address, parameter) => Self::command_with_12bit_identifier_verb(node_address, self.id(), parameter.id()),
             Command::GetConnectionSelect(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), *payload.connection_index()),
-            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), *payload.offset()),
+            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
+            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
             Command::GetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
             Command::SetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
             Command::GetStreamFormat(node_address) => Self::command_with_4bit_identifier_verb(node_address, self.id(), 0x0),
@@ -577,7 +577,7 @@ impl Parameter {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetConnectionSelectPayload {
     connection_index: u8,
 }
@@ -588,9 +588,13 @@ impl SetConnectionSelectPayload {
             connection_index,
         }
     }
+
+    pub fn as_u8(&self) -> u8 {
+        self.connection_index
+    }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct GetConnectionListEntryPayload {
     offset: u8,
 }
@@ -601,9 +605,13 @@ impl GetConnectionListEntryPayload {
             offset,
         }
     }
+
+    pub fn as_u8(&self) -> u8 {
+        self.offset
+    }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct GetAmplifierGainMutePayload {
     amp_type: GetAmplifierGainMuteType,
     side: GetAmplifierGainMuteSide,
@@ -636,7 +644,7 @@ impl GetAmplifierGainMutePayload {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetAmplifierGainMutePayload {
     amp_type: SetAmplifierGainMuteType,
     side: SetAmplifierGainMuteSide,
@@ -676,7 +684,7 @@ impl SetAmplifierGainMutePayload {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetStreamFormatPayload {
     number_of_channels: u8,
     bits_per_sample: BitsPerSample,
@@ -750,7 +758,7 @@ impl SetStreamFormatPayload {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetChannelStreamIdPayload {
     channel: u8,
     stream: u8,
@@ -769,7 +777,7 @@ impl SetChannelStreamIdPayload {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetPinWidgetControlPayload {
     voltage_reference_enable: VoltageReferenceSignalLevel,
     in_enable: bool,
@@ -804,7 +812,7 @@ impl SetPinWidgetControlPayload {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct SetEAPDBTLEnablePayload {
     btl_enable: bool,
     eapd_enable: bool,
