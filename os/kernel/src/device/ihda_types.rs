@@ -1,21 +1,17 @@
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
-use core::ops::BitAnd;
 use log::{debug, info};
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
-use x86_64::structures::paging::page::PageRange;
-use crate::device::ihda_node_infos::{AmpCapabilitiesResponse, AmplifierGainMuteResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, BitsPerSample, ChannelStreamIdResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, ConnectionSelectResponse, EAPDBTLEnableResponse, FunctionGroupTypeResponse, GetAmplifierGainMuteSide, GetAmplifierGainMuteType, GPIOCountResponse, Response, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, StreamFormatResponse, StreamType, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, VolumeKnobCapabilitiesResponse};
-use crate::device::pit::Timer;
+use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command};
 use crate::timer;
 
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
-const MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET: u8 = 16;
-const MAX_AMPLIFIER_GAIN: u8 = u8::MAX;
+
 
 // representation of an IHDA register
 pub struct Register<T: LowerHex + PrimInt> {
@@ -241,9 +237,9 @@ impl ControllerRegisterSet {
         }
     }
 
-    fn immediate_command(&self, command: u32) -> u32 {
+    fn immediate_command(&self, command: &Command) -> RawResponse {
         self.icis().write(0b10);
-        self.icoi().write(command);
+        self.icoi().write(command.as_u32());
         self.icis().write(0b1);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
@@ -252,7 +248,7 @@ impl ControllerRegisterSet {
                 panic!("IHDA immediate command timed out")
             }
         }
-        self.icii().read()
+        RawResponse::new(self.icii().read(), command.clone())
     }
 }
 
@@ -269,8 +265,8 @@ impl RegisterInterface {
     }
 
     pub fn send_command(&self, command: &Command) -> Response {
-        let response = self.crs.immediate_command(command.as_u32());
-        ResponseParser::parse_response(response, command)
+        let response = self.crs.immediate_command(command);
+        Response::from_raw_response(response)
     }
 }
 
@@ -458,428 +454,6 @@ pub enum WidgetInfoContainer {
     VendorDefined,
 }
 
-#[derive(Debug)]
-pub enum Command {
-    GetParameter(NodeAddress, Parameter),
-    GetConnectionSelect(NodeAddress),
-    SetConnectionSelect(NodeAddress, SetConnectionSelectPayload),
-    GetConnectionListEntry(NodeAddress, GetConnectionListEntryPayload),
-    GetAmplifierGainMute(NodeAddress, GetAmplifierGainMutePayload),
-    SetAmplifierGainMute(NodeAddress, SetAmplifierGainMutePayload),
-    GetStreamFormat(NodeAddress),
-    SetStreamFormat(NodeAddress, SetStreamFormatPayload),
-    GetChannelStreamId(NodeAddress),
-    SetChannelStreamId(NodeAddress, SetChannelStreamIdPayload),
-    GetPinWidgetControl(NodeAddress),
-    SetPinWidgetControl(NodeAddress, SetPinWidgetControlPayload),
-    GetEAPDBTLEnable(NodeAddress),
-    SetEAPDBTLEnable(NodeAddress, SetEAPDBTLEnablePayload),
-    GetConfigurationDefault(NodeAddress),
-}
-
-impl Command {
-    pub fn id(&self) -> u16 {
-        match self {
-            Command::GetParameter(..) => 0xF00,
-            Command::GetConnectionSelect(..) => 0xF01,
-            Command::SetConnectionSelect(..) => 0x701,
-            Command::GetConnectionListEntry(..) => 0xF02,
-            Command::GetAmplifierGainMute(..) => 0xB,
-            Command::SetAmplifierGainMute(..) => 0x3,
-            Command::GetStreamFormat(..) => 0xA,
-            Command::SetStreamFormat(..) => 0x2,
-            Command::GetChannelStreamId(..) => 0xF06,
-            Command::SetChannelStreamId(..) => 0x706,
-            Command::GetPinWidgetControl(..) => 0xF07,
-            Command::SetPinWidgetControl(..) => 0x707,
-            Command::GetEAPDBTLEnable(..) => 0xF0C,
-            Command::SetEAPDBTLEnable(..) => 0x70C,
-            Command::GetConfigurationDefault(..) => 0xF1C,
-        }
-    }
-
-    pub fn as_u32(&self) -> u32 {
-        match self {
-            Command::GetParameter(node_address, parameter) => Self::command_with_12bit_identifier_verb(node_address, self.id(), parameter.id()),
-            Command::GetConnectionSelect(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
-            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
-            Command::GetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
-            Command::SetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
-            Command::GetStreamFormat(node_address) => Self::command_with_4bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetStreamFormat(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
-            Command::GetChannelStreamId(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetChannelStreamId(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
-            Command::GetPinWidgetControl(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetPinWidgetControl(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
-            Command::GetEAPDBTLEnable(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-            Command::SetEAPDBTLEnable(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
-            Command::GetConfigurationDefault(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
-        }
-    }
-
-    fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
-        (node_address.codec_address as u32) << 28
-            | (node_address.node_id as u32) << 20
-            | (verb_id as u32) << 8
-            | payload as u32
-    }
-
-    fn command_with_4bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u16) -> u32 {
-        (node_address.codec_address as u32) << 28
-            | (node_address.node_id as u32) << 20
-            | (verb_id as u32) << 16
-            | payload as u32
-    }
-}
-
-// compare to table 140 in section 7.3.6 of the specification
-#[derive(Debug)]
-pub enum Parameter {
-    VendorId,
-    RevisionId,
-    SubordinateNodeCount,
-    FunctionGroupType,
-    AudioFunctionGroupCapabilities,
-    AudioWidgetCapabilities,
-    SampleSizeRateCAPs,
-    SupportedStreamFormats,
-    PinCapabilities,
-    InputAmpCapabilities,
-    OutputAmpCapabilities,
-    ConnectionListLength,
-    SupportedPowerStates,
-    ProcessingCapabilities,
-    GPIOCount,
-    VolumeKnobCapabilities,
-}
-
-impl Parameter {
-    pub fn id(&self) -> u8 {
-        match self {
-            Parameter::VendorId => 0x00,
-            Parameter::RevisionId => 0x02,
-            Parameter::SubordinateNodeCount => 0x04,
-            Parameter::FunctionGroupType => 0x05,
-            Parameter::AudioFunctionGroupCapabilities => 0x08,
-            Parameter::AudioWidgetCapabilities => 0x09,
-            Parameter::SampleSizeRateCAPs => 0x0A,
-            Parameter::SupportedStreamFormats => 0x0B,
-            Parameter::PinCapabilities => 0x0C,
-            Parameter::InputAmpCapabilities => 0x0D,
-            Parameter::OutputAmpCapabilities => 0x12,
-            Parameter::ConnectionListLength => 0x0E,
-            Parameter::SupportedPowerStates => 0x0F,
-            Parameter::ProcessingCapabilities => 0x10,
-            Parameter::GPIOCount => 0x11,
-            Parameter::VolumeKnobCapabilities => 0x13,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SetConnectionSelectPayload {
-    connection_index: u8,
-}
-
-impl SetConnectionSelectPayload {
-    pub fn new(connection_index: u8) -> Self {
-        Self {
-            connection_index,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        self.connection_index
-    }
-}
-
-#[derive(Debug)]
-pub struct GetConnectionListEntryPayload {
-    offset: u8,
-}
-
-impl GetConnectionListEntryPayload {
-    pub fn new(offset: u8) -> Self {
-        Self {
-            offset,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        self.offset
-    }
-}
-
-#[derive(Debug)]
-pub struct GetAmplifierGainMutePayload {
-    amp_type: GetAmplifierGainMuteType,
-    side: GetAmplifierGainMuteSide,
-    index: u8,
-}
-
-impl GetAmplifierGainMutePayload {
-    pub fn new(amp_type: GetAmplifierGainMuteType, side: GetAmplifierGainMuteSide, index: u8) -> Self {
-        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") };
-        Self {
-            amp_type,
-            side,
-            index,
-        }
-    }
-
-    fn as_u16(&self) -> u16 {
-        let amp_type: u16 = match self.amp_type  {
-            GetAmplifierGainMuteType::Input => 0,
-            GetAmplifierGainMuteType::Output => 1,
-        };
-        let side: u16 = match self.side  {
-            GetAmplifierGainMuteSide::Right => 0,
-            GetAmplifierGainMuteSide::Left => 1,
-        };
-
-        debug!("get_amplifier: {:#x}", amp_type << 15 | side << 13 | self.index as u16);
-
-        amp_type << 15 | side << 13 | self.index as u16
-    }
-}
-
-#[derive(Debug)]
-pub struct SetAmplifierGainMutePayload {
-    amp_type: SetAmplifierGainMuteType,
-    side: SetAmplifierGainMuteSide,
-    index: u8,
-    mute: bool,
-    gain: u8,
-}
-
-impl SetAmplifierGainMutePayload {
-    pub fn new(amp_type: SetAmplifierGainMuteType, side: SetAmplifierGainMuteSide, index: u8, mute: bool, gain: u8) -> Self {
-        if gain > MAX_AMPLIFIER_GAIN { panic!("gain is a 7 bit parameter, writing 8 bit values will leak into mute bit and are therefore prohibited") }
-        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
-        Self {
-            amp_type,
-            side,
-            index,
-            mute,
-            gain,
-        }
-    }
-
-    fn as_u16(&self) -> u16 {
-        let amp_type: u16 = match self.amp_type  {
-            SetAmplifierGainMuteType::Input => 0b01,
-            SetAmplifierGainMuteType::Output => 0b10,
-            SetAmplifierGainMuteType::Both => 0b11,
-        };
-        let side: u16 = match self.side  {
-            SetAmplifierGainMuteSide::Right => 0b01,
-            SetAmplifierGainMuteSide::Left => 0b10,
-            SetAmplifierGainMuteSide::Both => 0b11,
-        };
-
-        debug!("set_amplifier: {:#x}", amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16);
-
-        amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16
-    }
-}
-
-#[derive(Debug)]
-pub struct SetStreamFormatPayload {
-    number_of_channels: u8,
-    bits_per_sample: BitsPerSample,
-    sample_base_rate_divisor: u8,
-    sample_base_rate_multiple: u8,
-    sample_base_rate: u16,
-    stream_type: StreamType,
-}
-
-impl SetStreamFormatPayload {
-    pub fn new(
-        number_of_channels: u8,
-        bits_per_sample: BitsPerSample,
-        sample_base_rate_divisor: u8,
-        sample_base_rate_multiple: u8,
-        sample_base_rate: u16,
-        stream_type: StreamType,
-    ) -> Self {
-        Self {
-            number_of_channels,
-            bits_per_sample,
-            sample_base_rate_divisor,
-            sample_base_rate_multiple,
-            sample_base_rate,
-            stream_type,
-        }
-    }
-
-    pub fn as_u16(&self) -> u16 {
-        let number_of_channels = self.number_of_channels - 1;
-        let bits_per_sample = match self.bits_per_sample {
-            BitsPerSample::Eight => 0b000,
-            BitsPerSample::Sixteen => 0b001,
-            BitsPerSample::Twenty => 0b010,
-            BitsPerSample::Twentyfour => 0b011,
-            BitsPerSample::Thirtytwo => 0b100,
-        };
-        let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
-        let sample_base_rate_multiple = self.sample_base_rate_multiple - 1;
-        let sample_base_rate = if self.sample_base_rate == 44100 { 1 } else { 0 };
-        let stream_type = match self.stream_type {
-            StreamType::PCM => 0,
-            StreamType::NonPCM => 1,
-        };
-        (stream_type as u16) << 15
-            | (sample_base_rate as u16) << 14
-            | (sample_base_rate_multiple as u16) << 11
-            | (sample_base_rate_divisor as u16) << 8
-            | (bits_per_sample as u16) << 4
-            | number_of_channels as u16
-    }
-
-    pub fn from_response(stream_format: StreamFormatResponse) -> Self {
-        Self {
-            number_of_channels: *stream_format.number_of_channels(),
-            bits_per_sample: match stream_format.bits_per_sample() {
-                BitsPerSample::Eight => BitsPerSample::Eight,
-                BitsPerSample::Sixteen => BitsPerSample::Sixteen,
-                BitsPerSample::Twenty => BitsPerSample::Twenty,
-                BitsPerSample::Twentyfour => BitsPerSample::Twentyfour,
-                BitsPerSample::Thirtytwo => BitsPerSample::Thirtytwo,
-            },
-            sample_base_rate_divisor: *stream_format.sample_base_rate_divisor(),
-            sample_base_rate_multiple: *stream_format.sample_base_rate_multiple(),
-            sample_base_rate: *stream_format.sample_base_rate(),
-            stream_type: match stream_format.stream_type() {
-                StreamType::PCM => StreamType::PCM,
-                StreamType::NonPCM => StreamType::NonPCM,
-            },
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SetChannelStreamIdPayload {
-    channel: u8,
-    stream: u8,
-}
-
-impl SetChannelStreamIdPayload {
-    pub fn new(channel: u8, stream: u8,) -> Self {
-        Self {
-            channel,
-            stream,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        (self.stream << 4) | self.channel
-    }
-}
-
-#[derive(Debug)]
-pub struct SetPinWidgetControlPayload {
-    voltage_reference_enable: VoltageReferenceSignalLevel,
-    in_enable: bool,
-    out_enable: bool,
-    h_phn_enable: bool,
-}
-
-impl SetPinWidgetControlPayload {
-    pub fn new(
-        voltage_reference_enable: VoltageReferenceSignalLevel,
-        in_enable: bool,
-        out_enable: bool,
-        h_phn_enable: bool,
-    ) -> Self {
-        Self {
-            voltage_reference_enable,
-            in_enable,
-            out_enable,
-            h_phn_enable,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        let voltage_reference_enable = match self.voltage_reference_enable {
-            VoltageReferenceSignalLevel::HiZ => 0b000,
-            VoltageReferenceSignalLevel::FiftyPercent => 0b001,
-            VoltageReferenceSignalLevel::Ground0V => 0b010,
-            VoltageReferenceSignalLevel::EightyPercent => 0b100,
-            VoltageReferenceSignalLevel::HundredPercent => 0b101,
-        };
-        (self.h_phn_enable as u8) << 7 | (self.out_enable as u8) << 6 | (self.in_enable as u8) << 5 | voltage_reference_enable
-    }
-}
-
-#[derive(Debug)]
-pub struct SetEAPDBTLEnablePayload {
-    btl_enable: bool,
-    eapd_enable: bool,
-    lr_swap: bool,
-}
-
-impl SetEAPDBTLEnablePayload {
-    pub fn new(
-        btl_enable: bool,
-        eapd_enable: bool,
-        lr_swap: bool,
-    ) -> Self {
-        Self {
-            btl_enable,
-            eapd_enable,
-            lr_swap,
-        }
-    }
-
-    pub fn as_u8(&self) -> u8 {
-        (self.btl_enable as u8) << 2 | (self.eapd_enable as u8) << 1 | self.lr_swap as u8
-    }
-}
-
-pub struct ResponseParser;
-
-impl ResponseParser {
-    pub fn parse_response(response: u32, command: &Command) -> Response {
-        match command {
-            Command::GetParameter(_, parameter) => {
-                match parameter {
-                    Parameter::VendorId => Response::VendorId(VendorIdResponse::new(response)),
-                    Parameter::RevisionId => Response::RevisionId(RevisionIdResponse::new(response)),
-                    Parameter::SubordinateNodeCount => Response::SubordinateNodeCount(SubordinateNodeCountResponse::new(response)),
-                    Parameter::FunctionGroupType => Response::FunctionGroupType(FunctionGroupTypeResponse::new(response)),
-                    Parameter::AudioFunctionGroupCapabilities => Response::AudioFunctionGroupCapabilities(AudioFunctionGroupCapabilitiesResponse::new(response)),
-                    Parameter::AudioWidgetCapabilities => Response::AudioWidgetCapabilities(AudioWidgetCapabilitiesResponse::new(response)),
-                    Parameter::SampleSizeRateCAPs => Response::SampleSizeRateCAPs(SampleSizeRateCAPsResponse::new(response)),
-                    Parameter::SupportedStreamFormats => Response::SupportedStreamFormats(SupportedStreamFormatsResponse::new(response)),
-                    Parameter::PinCapabilities => Response::PinCapabilities(PinCapabilitiesResponse::new(response)),
-                    Parameter::InputAmpCapabilities => Response::InputAmpCapabilities(AmpCapabilitiesResponse::new(response)),
-                    Parameter::OutputAmpCapabilities => Response::OutputAmpCapabilities(AmpCapabilitiesResponse::new(response)),
-                    Parameter::ConnectionListLength => Response::ConnectionListLength(ConnectionListLengthResponse::new(response)),
-                    Parameter::SupportedPowerStates => Response::SupportedPowerStates(SupportedPowerStatesResponse::new(response)),
-                    Parameter::ProcessingCapabilities => Response::ProcessingCapabilities(ProcessingCapabilitiesResponse::new(response)),
-                    Parameter::GPIOCount => Response::GPIOCount(GPIOCountResponse::new(response)),
-                    Parameter::VolumeKnobCapabilities => Response::VolumeKnobCapabilities(VolumeKnobCapabilitiesResponse::new(response)),
-                }
-            }
-            Command::GetConnectionSelect(..) => Response::ConnectionSelect(ConnectionSelectResponse::new(response)),
-            Command::SetConnectionSelect(..) => Response::SetInfo,
-            Command::GetConnectionListEntry(..) => Response::ConnectionListEntry(ConnectionListEntryResponse::new(response)),
-            Command::GetAmplifierGainMute(..) => Response::AmplifierGainMute(AmplifierGainMuteResponse::new(response)),
-            Command::SetAmplifierGainMute(..) => Response::SetInfo,
-            Command::GetStreamFormat(..) => Response::StreamFormat(StreamFormatResponse::new(response)),
-            Command::SetStreamFormat(..) => Response::SetInfo,
-            Command::GetChannelStreamId(..) => Response::ChannelStreamId(ChannelStreamIdResponse::new(response)),
-            Command::SetChannelStreamId(..) => Response::SetInfo,
-            Command::GetPinWidgetControl(..) => Response::PinWidgetControl(PinWidgetControlResponse::new(response)),
-            Command::SetPinWidgetControl(..) => Response::SetInfo,
-            Command::GetEAPDBTLEnable(..) => Response::EAPDBTLEnable(EAPDBTLEnableResponse::new(response)),
-            Command::SetEAPDBTLEnable(..) => Response::SetInfo,
-            Command::GetConfigurationDefault(..) => Response::ConfigurationDefault(ConfigurationDefaultResponse::new(response)),
-        }
-    }
-}
-
 #[derive(Debug, Getters)]
 pub struct BufferDescriptorListEntry {
     address: u64,
@@ -908,7 +482,7 @@ impl BufferDescriptorListEntry {
         Self {
             address: (raw_data & 0xFFFF_FFFF_FFFF_FFFF) as u64,
             length_in_bytes: ((raw_data >> 64) & 0xFFFF_FFFF) as u32,
-            // probably better use get_bit() function from ihda_node_infos.rs, after moving it to a better place
+            // probably better use get_bit() function from ihda_node_communication, after moving it to a better place
             // or even better: use a proper library for all the bit operations on unsigned integers
             interrupt_on_completion: ((raw_data >> 96) & 1) == 1,
         }

@@ -10,4 +10,4 @@ pub mod serial;
 pub mod pci;
 pub mod ihda;
 pub mod ihda_types;
-pub mod ihda_node_infos;
+pub mod ihda_node_communication;
