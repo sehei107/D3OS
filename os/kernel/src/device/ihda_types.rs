@@ -5,7 +5,8 @@ use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command};
-use crate::timer;
+use crate::device::pit::Timer;
+use crate::{memory, timer};
 
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
@@ -237,6 +238,20 @@ impl ControllerRegisterSet {
         }
     }
 
+    // fn set_bit(&self, bit: &Bit) {
+    //     self.icis().write(0b10);
+    //     self.icoi().write(command.as_u32());
+    //     self.icis().write(0b1);
+    //     let start_timer = timer().read().systime_ms();
+    //     // value for CRST_TIMEOUT arbitrarily chosen
+    //     while (self.icis().read() & 0b10) != 0b10 {
+    //         if timer().read().systime_ms() > start_timer + IMMEDIATE_COMMAND_TIMEOUT_IN_MS {
+    //             panic!("IHDA immediate command timed out")
+    //         }
+    //     }
+    //     RawResponse::new(self.icii().read(), command.clone())
+    // }
+
     fn immediate_command(&self, command: &Command) -> RawResponse {
         self.icis().write(0b10);
         self.icoi().write(command.as_u32());
@@ -252,6 +267,18 @@ impl ControllerRegisterSet {
     }
 }
 
+#[derive(Debug)]
+pub enum Bit {
+    UNSOL,
+    FCNTRL,
+    CRST,
+    SDIWEN(u8),
+    GIE,
+    CIE,
+    SIE(u8),
+    SSYNC(u8),
+}
+
 #[derive(Getters)]
 pub struct RegisterInterface {
     crs: ControllerRegisterSet,
@@ -262,6 +289,115 @@ impl RegisterInterface {
         RegisterInterface {
             crs: ControllerRegisterSet::new(mmio_base_address),
         }
+    }
+
+    pub fn reset_controller(&self) {
+        // set controller reset bit (CRST)
+        self.crs().gctl().set_bit(0);
+        let start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        const CRST_TIMEOUT: usize = 100;
+        while !self.crs().gctl().assert_bit(0) {
+            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
+                panic!("IHDA controller reset timed out")
+            }
+        }
+
+        // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
+        Timer::wait(1);
+    }
+
+    pub fn setup_ihda_config_space(&self) {
+        // set Accept Unsolicited Response Enable (UNSOL) bit
+        self.crs().gctl().set_bit(8);
+
+        // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
+        self.crs().intctl().set_bit(30);
+        self.crs().intctl().set_bit(31);
+
+        // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
+        self.crs().wakeen().set_all_bits();
+    }
+
+    pub fn init_corb(&self) {
+        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
+        self.crs().corbctl().clear_all_bits();
+
+        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
+        let corbsize = self.crs().corbsize().read() & 0b11;
+
+        assert_eq!(corbsize, 0b10);
+
+        // setup MMIO space for Command Outbound Ring Buffer – CORB
+        let corb_frame_range = memory::physical::alloc(1);
+        match corb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                let start_address = start.start_address().as_u64();
+                let lbase = (start_address & 0xFFFFFFFF) as u32;
+                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+                self.crs().corblbase().write(lbase);
+                self.crs().corbubase().write(ubase);
+            }
+        }
+
+        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
+        // IHDA::reset_corb(crs);
+    }
+
+    pub fn reset_corb(&self) {
+        // clear CORBWP
+        self.crs().corbwp().clear_all_bits();
+
+        //reset CORBRP
+        self.crs().corbrp().set_bit(15);
+        let start_timer = timer().read().systime_ms();
+        // value for CORBRPRST_TIMEOUT arbitrarily chosen
+        const CORBRPRST_TIMEOUT: usize = 10000;
+        while self.crs().corbrp().read() != 0x0 {
+            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+                panic!("CORB read pointer reset timed out")
+            }
+        }
+        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
+        // actually you are supposed to read a 1 back from bit 15
+        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
+        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
+        // this is why the code now just checks if the register contains the value 0 after the reset
+        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
+    }
+
+    pub fn init_rirb(&self) {
+        // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
+        self.crs().rirbctl().clear_all_bits();
+
+        // setup MMIO space for Response Inbound Ring Buffer – RIRB
+        let rirb_frame_range = memory::physical::alloc(1);
+        match rirb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                let start_address = start.start_address().as_u64();
+                let lbase = (start_address & 0xFFFFFFFF) as u32;
+                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+                self.crs().rirblbase().write(lbase);
+                self.crs().rirbubase().write(ubase);
+            }
+        }
+
+        // reset RIRBWP
+        self.crs().rirbwp().set_bit(15);
+    }
+
+    pub fn start_corb(&self) {
+        // set CORBRUN and CMEIE bits
+        self.crs().corbctl().set_bit(0);
+        self.crs().corbctl().set_bit(1);
+    }
+
+    pub fn start_rirb(&self) {
+        // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
+        self.crs().rirbctl().set_bit(0);
+        self.crs().rirbctl().set_bit(1);
+        self.crs().rirbctl().set_bit(2);
     }
 
     pub fn send_command(&self, command: &Command) -> Response {

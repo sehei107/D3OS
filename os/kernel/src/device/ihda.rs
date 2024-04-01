@@ -11,11 +11,11 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager, timer};
+use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager};
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, StreamFormatResponse, ChannelStreamIdResponse, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload};
 use crate::device::ihda_node_communication::Command::{GetChannelStreamId, GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, GetStreamFormat, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl};
 use crate::device::ihda_node_communication::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_types::{Codec, ControllerRegisterSet, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry};
+use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -40,20 +40,19 @@ impl InterruptHandler for IHDAInterruptHandler {
 
 impl IHDA {
     pub fn new() -> Self {
-        let register_interface = IHDA::connect_controller();
+        let register_interface = Self::connect_controller();
 
         info!("Initializing IHDA sound card");
-        IHDA::reset_controller(register_interface.crs());
+        register_interface.reset_controller();
         info!("IHDA Controller reset complete");
 
-        IHDA::setup_ihda_config_space(register_interface.crs());
+        register_interface.setup_ihda_config_space();
         info!("IHDA configuration space set up");
 
-
-        IHDA::init_corb(register_interface.crs());
-        IHDA::init_rirb(register_interface.crs());
-        IHDA::start_corb(register_interface.crs());
-        IHDA::start_rirb(register_interface.crs());
+        register_interface.init_corb();
+        register_interface.init_rirb();
+        register_interface.start_corb();
+        register_interface.start_rirb();
 
         info!("CORB and RIRB set up and running");
 
@@ -64,83 +63,6 @@ impl IHDA {
 
         debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
-        // debug!("AFG Subordinate Node Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().subordinate_node_count());
-        // debug!("AFG Function Group Type: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().function_group_type());
-        // debug!("AFG Audio Function Group Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().audio_function_group_caps());
-        // debug!("AFG Sample Size, Rate CAPs: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().sample_size_rate_caps());
-        // debug!("AFG Stream Formats: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().stream_formats());
-        // debug!("AFG Input Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().input_amp_caps());
-        // debug!("AFG Output Amp Capabilities: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().output_amp_caps());
-        // debug!("AFG Supported Power States: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().supported_power_states());
-        // debug!("AFG Supported GPIO Count: {:?}", codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().gpio_count());
-
-        // wait a bit to have tim to read each print
-
-        debug!("VENDOR ID: {:?}", codecs.get(0).unwrap().root_node().vendor_id());
-        debug!("REVISION ID: {:?}", codecs.get(0).unwrap().root_node().revision_id());
-
-        debug!("Find all widgets in first audio function group:");
-        for widget in codecs.get(0).unwrap().root_node().function_group_nodes().get(0).unwrap().widgets().iter() {
-            // debug!("{:?} found, id: {:?}, channel count: {:?}", widget.audio_widget_capabilities().widget_type(), widget.address().node_id(), widget.max_number_of_channels());
-
-            match widget.audio_widget_capabilities().widget_type() {
-                WidgetType::AudioOutput => {
-                    debug!("audio output converter widget {:?}:", widget.address());
-                    debug!("channel count {:?}:", widget.max_number_of_channels());
-                    debug!("stream format {:?}:", StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(widget.address().clone()))).unwrap());
-
-                }
-                WidgetType::AudioInput => {}
-                WidgetType::AudioMixer => {
-                    // if (*widget.address().node_id() == 12) | (*widget.address().node_id() == 13) {
-                    //     let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
-                    //
-                    //     debug!("mixer widget {:?}:", widget.address());
-                    //     debug!("channel count {:?}:", widget.max_number_of_channels());
-                    //     debug!("connection list length: {:?}", ConnectionListLengthInfo::try_from(register_interface.send_command(widget.address(), &GetParameter(ConnectionListLength))).unwrap());
-                    //     debug!("first connection list entries: {:?}", ConnectionListEntryInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionListEntry { offset: 0 })).unwrap());
-                    //     debug!("connection select: {:?}", ConnectionSelectInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionSelect)).unwrap());
-                    //
-                    //     debug!("port connectivity: {:?}, default device: {:?}, default association: {:?}, sequence: {:?}",
-                    //             config_defaults.port_connectivity(), config_defaults.default_device(), config_defaults.default_association(), config_defaults.sequence());
-                    // }
-
-                }
-                WidgetType::AudioSelector => {}
-                WidgetType::PinComplex => {
-                    // let config_defaults = ConfigurationDefaultInfo::try_from(register_interface.send_command(widget.address(), &GetConfigurationDefault)).unwrap();
-                    // match config_defaults.port_connectivity() {
-                    //     ConfigDefPortConnectivity::Jack => {
-                    //         if *widget.address().node_id() == 27 {
-                    //             debug!("pin widget {:?}:", widget.address());
-                    //             debug!("EAPD capable: {:?}", PinCapabilitiesInfo::try_from(register_interface.send_command(widget.address(), &GetParameter(PinCapabilities))).unwrap().eapd_capable());
-                    //             debug!("channel count {:?}:", widget.max_number_of_channels());
-                    //             debug!("connection list length: {:?}:",
-                    //                 match widget.widget_info() {
-                    //                     WidgetInfoContainer::PinComplex(_,_,_,cll,_,_) => { cll },
-                    //                     _ => { panic!() },
-                    //                 });
-                    //             debug!("first connection list entries: {:?}", ConnectionListEntryInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionListEntry { offset: 0 })).unwrap());
-                    //             debug!("connection select: {:?}", ConnectionSelectInfo::try_from(register_interface.send_command(widget.address(), &GetConnectionSelect)).unwrap());
-                    //
-                    //             debug!("port connectivity: {:?}, default device: {:?}, default association: {:?}, sequence: {:?}",
-                    //             config_defaults.port_connectivity(), config_defaults.default_device(), config_defaults.default_association(), config_defaults.sequence());
-                    //         }
-                    //     }
-                    //     _ => {}
-                    // }
-                }
-                WidgetType::PowerWidget => {}
-                WidgetType::VolumeKnobWidget => {}
-                WidgetType::BeepGeneratorWidget => {}
-                WidgetType::VendorDefinedAudioWidget => {}
-            }
-            Timer::wait(2000);
-        }
-
-        // wait ten minutes, so you can read the previous prints on real hardware where you can't set breakpoints with a debugger
-        Timer::wait(600000);
-
         IHDA {}
     }
 
@@ -150,7 +72,6 @@ impl IHDA {
         // find ihda devices
         let ihda_devices = pci.search_by_class(PCI_MULTIMEDIA_DEVICE, PCI_IHDA_DEVICE);
         debug!("[{}] IHDA device{} found", ihda_devices.len(), if ihda_devices.len() == 1 { "" } else { "s" });
-
 
         if ihda_devices.len() > 0 {
             let device;
@@ -210,116 +131,6 @@ impl IHDA {
             return RegisterInterface::new(mmio_base_address);
         }
         panic!("No IHDA device found!");
-    }
-
-    fn reset_controller(crs: &ControllerRegisterSet) {
-        // set controller reset bit (CRST)
-        crs.gctl().set_bit(0);
-        let start_timer = timer().read().systime_ms();
-        // value for CRST_TIMEOUT arbitrarily chosen
-        const CRST_TIMEOUT: usize = 100;
-        while !crs.gctl().assert_bit(0) {
-            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
-                panic!("IHDA controller reset timed out")
-            }
-        }
-
-        // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
-        Timer::wait(1);
-    }
-
-    fn setup_ihda_config_space(crs: &ControllerRegisterSet) {
-        // set Accept Unsolicited Response Enable (UNSOL) bit
-        crs.gctl().set_bit(8);
-
-        // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
-        crs.intctl().set_bit(30);
-        crs.intctl().set_bit(31);
-
-        // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
-        crs.wakeen().set_all_bits();
-    }
-
-    fn init_corb(crs: &ControllerRegisterSet) {
-        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
-        crs.corbctl().clear_all_bits();
-
-        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
-        let corbsize = crs.corbsize().read() & 0b11;
-
-        assert_eq!(corbsize, 0b10);
-
-        // setup MMIO space for Command Outbound Ring Buffer – CORB
-        let corb_frame_range = memory::physical::alloc(1);
-        match corb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-
-                crs.corblbase().write(lbase);
-                crs.corbubase().write(ubase);
-            }
-        }
-
-        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
-        // IHDA::reset_corb(crs);
-    }
-
-    fn reset_corb(crs: &ControllerRegisterSet) {
-        // clear CORBWP
-        crs.corbwp().clear_all_bits();
-
-        //reset CORBRP
-        crs.corbrp().set_bit(15);
-        let start_timer = timer().read().systime_ms();
-        // value for CORBRPRST_TIMEOUT arbitrarily chosen
-        const CORBRPRST_TIMEOUT: usize = 10000;
-        while crs.corbrp().read() != 0x0 {
-            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
-                panic!("CORB read pointer reset timed out")
-            }
-        }
-        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
-        // actually you are supposed to read a 1 back from bit 15
-        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
-        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
-        // this is why the code now just checks if the register contains the value 0 after the reset
-        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
-    }
-
-    fn init_rirb(crs: &ControllerRegisterSet) {
-        // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
-        crs.rirbctl().clear_all_bits();
-
-        // setup MMIO space for Response Inbound Ring Buffer – RIRB
-        let rirb_frame_range = memory::physical::alloc(1);
-        match rirb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                crs.rirblbase().write(lbase);
-                crs.rirbubase().write(ubase);
-            }
-        }
-
-        // reset RIRBWP
-        crs.rirbwp().set_bit(15);
-    }
-
-
-    fn start_corb(crs: &ControllerRegisterSet) {
-        // set CORBRUN and CMEIE bits
-        crs.corbctl().set_bit(0);
-        crs.corbctl().set_bit(1);
-    }
-
-    fn start_rirb(crs: &ControllerRegisterSet) {
-        // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
-        crs.rirbctl().set_bit(0);
-        crs.rirbctl().set_bit(1);
-        crs.rirbctl().set_bit(2);
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
@@ -458,7 +269,7 @@ impl IHDA {
         let line_out_pin_widgets_connected_to_jack = Self::find_line_out_pin_widgets_connected_to_jack(widgets);
         let default_output = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
 
-        Self::default_stereo_setup(default_output, register_interface, codec);
+        Self::default_stereo_setup(default_output, register_interface);
 
     }
 
@@ -494,19 +305,14 @@ impl IHDA {
         pin_widgets_connected_to_jack
     }
 
-    fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &RegisterInterface, codec: &Codec) {
+    fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &RegisterInterface) {
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
         debug!("pin widget: {:?}", pin_widget.address());
         register_interface.send_command(&SetAmplifierGainMute(pin_widget.address().clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
-        // debug!("input amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("input amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(pin_widget.address(), &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
 
         // activate input and output for pin widget
         let pin_widget_control = PinWidgetControlResponse::try_from(register_interface.send_command(&GetPinWidgetControl(pin_widget.address().clone()))).unwrap();
-        // debug!("pin widget control before: {:?}", pin_widget_control);
         /* after the following command, plugging headphones in and out the jack should make an audible noise */
         register_interface.send_command(&SetPinWidgetControl(pin_widget.address().clone(), SetPinWidgetControlPayload::new(
             match pin_widget_control.voltage_reference_enable() {
@@ -522,26 +328,12 @@ impl IHDA {
         )));
         // debug!("pin widget control after: {:?}", PinWidgetControlInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetPinWidgetControl)).unwrap());
 
-        // let eapd = EAPDBTLEnableInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetEAPDBTLEnable)).unwrap();
-        // debug!("eapd before: {:?}", eapd);
-        // register_interface.send_command(&pin_widget.address(), &SetEAPDBTLEnable(EAPDBTLEnableInfo::new(0b111)));
-        // debug!("eapd after: {:?}", EAPDBTLEnableInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetEAPDBTLEnable)).unwrap());
-        // Timer::wait(10000);
-
         let connection_list_entries = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(pin_widget.address().clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
         let mixer_widget = NodeAddress::new(0, *connection_list_entries.connection_list_entry_at_offset_index());
 
         // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
         debug!("mixer widget: {:?}", mixer_widget);
-        // debug!("input amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("input amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
         register_interface.send_command(&SetAmplifierGainMute(mixer_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 100)));
-        // debug!("input amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("input amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Input, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&mixer_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
 
 
         let connection_list_entries = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(mixer_widget.clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
@@ -551,11 +343,7 @@ impl IHDA {
         // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
         // default gain value is 87
         debug!("audio out widget: {:?}", audio_out_widget);
-        // debug!("output amp_gain_mute left before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute right before: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
         register_interface.send_command(&SetAmplifierGainMute(audio_out_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 127)));
-        // debug!("output amp_gain_mute left after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Left, index: 0 })).unwrap());
-        // debug!("output amp_gain_mute right after: {:?}", AmplifierGainMuteInfo::try_from(register_interface.send_command(&audio_out_widget, &GetAmplifierGainMute { amp_type: GetAmplifierGainMuteType::Output, side: GetAmplifierGainMuteSide::Right, index: 0 })).unwrap());
 
         // set stream id to 1
         debug!("channel stream id before: {:?}", ChannelStreamIdResponse::try_from(register_interface.send_command(&GetChannelStreamId(audio_out_widget.clone()))).unwrap());
