@@ -8,7 +8,10 @@ use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunct
 use crate::device::pit::Timer;
 use crate::{memory, timer};
 
+const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
+const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
+const MAX_AMOUNT_OF_BIDRECTIONAL_STREAMS: u8 = 30;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
@@ -147,8 +150,6 @@ pub struct ControllerRegisterSet {
 
 impl ControllerRegisterSet {
     pub fn new(mmio_base_address: u64) -> Self {
-        const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
-        const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
         let gctl = unsafe { (mmio_base_address as *mut u16).read() as u64 };
@@ -238,19 +239,81 @@ impl ControllerRegisterSet {
         }
     }
 
-    // fn set_bit(&self, bit: &Bit) {
-    //     self.icis().write(0b10);
-    //     self.icoi().write(command.as_u32());
-    //     self.icis().write(0b1);
-    //     let start_timer = timer().read().systime_ms();
-    //     // value for CRST_TIMEOUT arbitrarily chosen
-    //     while (self.icis().read() & 0b10) != 0b10 {
-    //         if timer().read().systime_ms() > start_timer + IMMEDIATE_COMMAND_TIMEOUT_IN_MS {
-    //             panic!("IHDA immediate command timed out")
-    //         }
-    //     }
-    //     RawResponse::new(self.icii().read(), command.clone())
-    // }
+    // GCAP
+    pub fn supports_64bit_bdl_addresses(&self) -> bool {
+        self.gcap.assert_bit(0)
+    }
+
+    pub fn number_of_serial_data_out_signals(&self) -> u8 {
+        match (self.gcap.read() >> 1) & 0b11 {
+            0b00 => 1,
+            0b01 => 2,
+            0b10 => 4,
+            _ => panic!("IHDA sound card reports an invalid number of Serial Data Out Signals")
+        }
+    }
+
+    pub fn number_of_bidirectional_streams_supported(&self) -> u8 {
+        let bss = ((self.gcap.read() >> 3) & 0b1_1111) as u8;
+        if bss > MAX_AMOUNT_OF_BIDRECTIONAL_STREAMS {
+            panic!("IHDA sound card reports an invalid number of Bidirectional Streams Supported")
+        }
+        bss
+    }
+
+    pub fn number_of_input_streams_supported(&self) -> u8 {
+        ((self.gcap.read() >> 8) & 0xF) as u8
+    }
+
+    pub fn number_of_output_streams_supported(&self) -> u8 {
+        ((self.gcap.read() >> 12) & 0xF) as u8
+    }
+
+    // VMIN and VMAJ
+    pub fn specification_version(&self) -> (u8, u8) {
+        (self.vmaj.read(), self.vmin.read())
+    }
+
+    // OUTPAY
+    pub fn output_payload_capacity_in_words(&self) -> u16 {
+        self.outpay.read()
+    }
+
+    // INPAY
+    pub fn input_payload_capacity_in_words(&self) -> u16 {
+        self.inpay.read()
+    }
+
+    // GCTL
+    pub fn reset_controller(&self) {
+        self.gctl().set_bit(0);
+        let start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        const CRST_TIMEOUT: usize = 100;
+        while !self.gctl().assert_bit(0) {
+            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
+                panic!("IHDA controller reset timed out")
+            }
+        }
+
+        // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
+        Timer::wait(1);
+    }
+
+    // pub fn initiate_flush()
+
+    pub fn assert_unsol_bit(&self) -> bool {
+        self.gctl.assert_bit(8)
+    }
+
+    pub fn set_unsol_bit(&self) {
+        self.gctl.set_bit(8);
+    }
+
+    pub fn clear_unsol_bit(&self) {
+        self.gctl.clear_bit(8);
+    }
+
 
     fn immediate_command(&self, command: &Command) -> RawResponse {
         self.icis().write(0b10);
@@ -267,17 +330,17 @@ impl ControllerRegisterSet {
     }
 }
 
-#[derive(Debug)]
-pub enum Bit {
-    UNSOL,
-    FCNTRL,
-    CRST,
-    SDIWEN(u8),
-    GIE,
-    CIE,
-    SIE(u8),
-    SSYNC(u8),
-}
+// #[derive(Debug)]
+// pub enum Bit {
+//     UNSOL,
+//     FCNTRL,
+//     CRST,
+//     SDIWEN(u8),
+//     GIE,
+//     CIE,
+//     SIE(u8),
+//     SSYNC(u8),
+// }
 
 #[derive(Getters)]
 pub struct RegisterInterface {
@@ -292,19 +355,7 @@ impl RegisterInterface {
     }
 
     pub fn reset_controller(&self) {
-        // set controller reset bit (CRST)
-        self.crs().gctl().set_bit(0);
-        let start_timer = timer().read().systime_ms();
-        // value for CRST_TIMEOUT arbitrarily chosen
-        const CRST_TIMEOUT: usize = 100;
-        while !self.crs().gctl().assert_bit(0) {
-            if timer().read().systime_ms() > start_timer + CRST_TIMEOUT {
-                panic!("IHDA controller reset timed out")
-            }
-        }
-
-        // according to IHDA specification (section 4.3 Codec Discovery), the system should at least wait .521 ms after reading CRST as 1, so that the codecs have time to self-initialize
-        Timer::wait(1);
+        self.crs.reset_controller();
     }
 
     pub fn setup_ihda_config_space(&self) {
