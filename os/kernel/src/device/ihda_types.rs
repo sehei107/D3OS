@@ -269,8 +269,7 @@ impl RegisterInterface {
     }
 
     pub fn send_command(&self, command: &Command) -> Response {
-        let parsed_command = CommandBuilder::build_command(command);
-        let response = self.crs.immediate_command(parsed_command);
+        let response = self.crs.immediate_command(command.as_u32());
         ResponseParser::parse_response(response, command)
     }
 }
@@ -459,79 +458,6 @@ pub enum WidgetInfoContainer {
     VendorDefined,
 }
 
-pub struct CommandBuilder;
-
-impl CommandBuilder {
-    pub fn build_command(command: &Command) -> u32 {
-        match command {
-            Command::GetParameter(node_address, parameter) => Self::command_with_12bit_identifier_verb(node_address, command.id(), parameter.id()),
-            Command::GetConnectionSelect(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.connection_index()),
-            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), *payload.offset()),
-            Command::GetAmplifierGainMute(node_address, payload)
-                => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_get_amplifier_gain_mute(payload.amp_type(), payload.side(), *payload.index())),
-            Command::SetAmplifierGainMute(node_address, payload)
-                => Self::command_with_4bit_identifier_verb(node_address, command.id(), Self::parse_set_amplifier_gain_mute(payload.amp_type(), payload.side(), *payload.index(), *payload.mute(), *payload.gain())),
-            Command::GetStreamFormat(node_address) => Self::command_with_4bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetStreamFormat(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, command.id(), payload.as_u16()),
-            Command::GetChannelStreamId(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetChannelStreamId(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetPinWidgetControl(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetPinWidgetControl(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetEAPDBTLEnable(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-            Command::SetEAPDBTLEnable(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, command.id(), payload.as_u8()),
-            Command::GetConfigurationDefault(node_address) => Self::command_with_12bit_identifier_verb(node_address, command.id(), 0x0),
-        }
-    }
-
-    fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
-        (node_address.codec_address as u32) << 28
-            | (node_address.node_id as u32) << 20
-            | (verb_id as u32) << 8
-            | payload as u32
-    }
-
-    fn command_with_4bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u16) -> u32 {
-        (node_address.codec_address as u32) << 28
-            | (node_address.node_id as u32) << 20
-            | (verb_id as u32) << 16
-            | payload as u32
-    }
-
-    fn parse_get_amplifier_gain_mute(amp_type: &GetAmplifierGainMuteType, side: &GetAmplifierGainMuteSide, index: u8) -> u16 {
-        let amp_type: u16 = match amp_type  {
-            GetAmplifierGainMuteType::Input => 0,
-            GetAmplifierGainMuteType::Output => 1,
-        };
-        let side: u16 = match side  {
-            GetAmplifierGainMuteSide::Right => 0,
-            GetAmplifierGainMuteSide::Left => 1,
-        };
-        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
-        debug!("get_amplifier: {:#x}", amp_type << 15 | side << 13 | index as u16);
-
-        amp_type << 15 | side << 13 | index as u16
-    }
-
-    fn parse_set_amplifier_gain_mute(amp_type: &SetAmplifierGainMuteType, side: &SetAmplifierGainMuteSide, index: u8, mute: bool, gain: u8) -> u16 {
-        let amp_type: u16 = match amp_type  {
-            SetAmplifierGainMuteType::Input => 0b01,
-            SetAmplifierGainMuteType::Output => 0b10,
-            SetAmplifierGainMuteType::Both => 0b11,
-        };
-        let side: u16 = match side  {
-            SetAmplifierGainMuteSide::Right => 0b01,
-            SetAmplifierGainMuteSide::Left => 0b10,
-            SetAmplifierGainMuteSide::Both => 0b11,
-        };
-        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
-        if gain > MAX_AMPLIFIER_GAIN { panic!("Trying to set amplifier gain higher than max value") }
-        debug!("set_amplifier: {:#x}", amp_type << 14 | side << 12 | (index as u16) << 8 | (mute as u16) << 7 | gain as u16);
-
-        amp_type << 14 | side << 12 | (index as u16) << 8 | (mute as u16) << 7 | gain as u16
-    }
-}
-
 #[derive(Debug)]
 pub enum Command {
     GetParameter(NodeAddress, Parameter),
@@ -570,6 +496,40 @@ impl Command {
             Command::SetEAPDBTLEnable(..) => 0x70C,
             Command::GetConfigurationDefault(..) => 0xF1C,
         }
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            Command::GetParameter(node_address, parameter) => Self::command_with_12bit_identifier_verb(node_address, self.id(), parameter.id()),
+            Command::GetConnectionSelect(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetConnectionSelect(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), *payload.connection_index()),
+            Command::GetConnectionListEntry(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), *payload.offset()),
+            Command::GetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
+            Command::SetAmplifierGainMute(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
+            Command::GetStreamFormat(node_address) => Self::command_with_4bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetStreamFormat(node_address, payload) => Self::command_with_4bit_identifier_verb(node_address, self.id(), payload.as_u16()),
+            Command::GetChannelStreamId(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetChannelStreamId(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
+            Command::GetPinWidgetControl(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetPinWidgetControl(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
+            Command::GetEAPDBTLEnable(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetEAPDBTLEnable(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
+            Command::GetConfigurationDefault(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+        }
+    }
+
+    fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
+        (node_address.codec_address as u32) << 28
+            | (node_address.node_id as u32) << 20
+            | (verb_id as u32) << 8
+            | payload as u32
+    }
+
+    fn command_with_4bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u16) -> u32 {
+        (node_address.codec_address as u32) << 28
+            | (node_address.node_id as u32) << 20
+            | (verb_id as u32) << 16
+            | payload as u32
     }
 }
 
@@ -652,11 +612,27 @@ pub struct GetAmplifierGainMutePayload {
 
 impl GetAmplifierGainMutePayload {
     pub fn new(amp_type: GetAmplifierGainMuteType, side: GetAmplifierGainMuteSide, index: u8) -> Self {
+        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") };
         Self {
             amp_type,
             side,
             index,
         }
+    }
+
+    fn as_u16(&self) -> u16 {
+        let amp_type: u16 = match self.amp_type  {
+            GetAmplifierGainMuteType::Input => 0,
+            GetAmplifierGainMuteType::Output => 1,
+        };
+        let side: u16 = match self.side  {
+            GetAmplifierGainMuteSide::Right => 0,
+            GetAmplifierGainMuteSide::Left => 1,
+        };
+
+        debug!("get_amplifier: {:#x}", amp_type << 15 | side << 13 | self.index as u16);
+
+        amp_type << 15 | side << 13 | self.index as u16
     }
 }
 
@@ -671,7 +647,8 @@ pub struct SetAmplifierGainMutePayload {
 
 impl SetAmplifierGainMutePayload {
     pub fn new(amp_type: SetAmplifierGainMuteType, side: SetAmplifierGainMuteSide, index: u8, mute: bool, gain: u8) -> Self {
-        if gain > 127 { panic!("gain is a 7 bit parameter, writing 8 bit values will leak into mute bit and are therefore prohibited") }
+        if gain > MAX_AMPLIFIER_GAIN { panic!("gain is a 7 bit parameter, writing 8 bit values will leak into mute bit and are therefore prohibited") }
+        if index > MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET { panic!("Index for amplifier out of range") }
         Self {
             amp_type,
             side,
@@ -679,6 +656,23 @@ impl SetAmplifierGainMutePayload {
             mute,
             gain,
         }
+    }
+
+    fn as_u16(&self) -> u16 {
+        let amp_type: u16 = match self.amp_type  {
+            SetAmplifierGainMuteType::Input => 0b01,
+            SetAmplifierGainMuteType::Output => 0b10,
+            SetAmplifierGainMuteType::Both => 0b11,
+        };
+        let side: u16 = match self.side  {
+            SetAmplifierGainMuteSide::Right => 0b01,
+            SetAmplifierGainMuteSide::Left => 0b10,
+            SetAmplifierGainMuteSide::Both => 0b11,
+        };
+
+        debug!("set_amplifier: {:#x}", amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16);
+
+        amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16
     }
 }
 
