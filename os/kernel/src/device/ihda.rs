@@ -138,7 +138,8 @@ impl IHDA {
     fn scan_for_available_codecs(register_interface: &RegisterInterface) -> Vec<Codec> {
         let mut codecs: Vec<Codec> = Vec::new();
         for index in 0..MAX_AMOUNT_OF_CODECS {
-            if register_interface.crs().wakests().assert_bit(index) {
+            // _TODO_: create proper API method in RegisterInterface
+            if register_interface.wakests().assert_bit(index) {
                 let root_node_addr = NodeAddress::new(index, 0x0);
 
                 let vendor_id_info = VendorIdResponse::try_from(register_interface.send_command(&GetParameter(root_node_addr.clone(), VendorId))).unwrap();
@@ -351,7 +352,7 @@ impl IHDA {
         debug!("channel stream id after: {:?}", ChannelStreamIdResponse::try_from(register_interface.send_command(&GetChannelStreamId(audio_out_widget.clone()))).unwrap());
 
         // set stream descriptor
-        let sd_registers = register_interface.crs().output_stream_descriptors().get(0).unwrap();
+        let sd_registers = register_interface.output_stream_descriptors().get(0).unwrap();
 
         debug!("----------------------------------------------------------------------------------");
         debug!("sdctl: {:#x}", sd_registers.sdctl().read());

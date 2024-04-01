@@ -102,7 +102,7 @@ impl StreamDescriptorRegisters {
 
 // representation of all IHDA registers
 #[derive(Getters)]
-pub struct ControllerRegisterSet {
+pub struct RegisterInterface {
     gcap: Register<u16>,
     vmin: Register<u8>,
     vmaj: Register<u8>,
@@ -148,7 +148,7 @@ pub struct ControllerRegisterSet {
     // sdlpiba_aliases: Vec<Register<u32>>,
 }
 
-impl ControllerRegisterSet {
+impl RegisterInterface {
     pub fn new(mmio_base_address: u64) -> Self {
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
@@ -315,6 +315,8 @@ impl ControllerRegisterSet {
     }
 
 
+
+
     fn immediate_command(&self, command: &Command) -> RawResponse {
         self.icis().write(0b10);
         self.icoi().write(command.as_u32());
@@ -327,6 +329,104 @@ impl ControllerRegisterSet {
             }
         }
         RawResponse::new(self.icii().read(), command.clone())
+    }
+
+    pub fn setup_ihda_config_space(&self) {
+        // set Accept Unsolicited Response Enable (UNSOL) bit
+        self.gctl().set_bit(8);
+
+        // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
+        self.intctl().set_bit(30);
+        self.intctl().set_bit(31);
+
+        // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
+        self.wakeen().set_all_bits();
+    }
+
+    pub fn init_corb(&self) {
+        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
+        self.corbctl().clear_all_bits();
+
+        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
+        let corbsize = self.corbsize().read() & 0b11;
+
+        assert_eq!(corbsize, 0b10);
+
+        // setup MMIO space for Command Outbound Ring Buffer – CORB
+        let corb_frame_range = memory::physical::alloc(1);
+        match corb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                let start_address = start.start_address().as_u64();
+                let lbase = (start_address & 0xFFFFFFFF) as u32;
+                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+                self.corblbase().write(lbase);
+                self.corbubase().write(ubase);
+            }
+        }
+
+        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
+        // IHDA::reset_corb(crs);
+    }
+
+    pub fn reset_corb(&self) {
+        // clear CORBWP
+        self.corbwp().clear_all_bits();
+
+        //reset CORBRP
+        self.corbrp().set_bit(15);
+        let start_timer = timer().read().systime_ms();
+        // value for CORBRPRST_TIMEOUT arbitrarily chosen
+        const CORBRPRST_TIMEOUT: usize = 10000;
+        while self.corbrp().read() != 0x0 {
+            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
+                panic!("CORB read pointer reset timed out")
+            }
+        }
+        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
+        // actually you are supposed to read a 1 back from bit 15
+        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
+        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
+        // this is why the code now just checks if the register contains the value 0 after the reset
+        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
+    }
+
+    pub fn init_rirb(&self) {
+        // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
+        self.rirbctl().clear_all_bits();
+
+        // setup MMIO space for Response Inbound Ring Buffer – RIRB
+        let rirb_frame_range = memory::physical::alloc(1);
+        match rirb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                let start_address = start.start_address().as_u64();
+                let lbase = (start_address & 0xFFFFFFFF) as u32;
+                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+                self.rirblbase().write(lbase);
+                self.rirbubase().write(ubase);
+            }
+        }
+
+        // reset RIRBWP
+        self.rirbwp().set_bit(15);
+    }
+
+    pub fn start_corb(&self) {
+        // set CORBRUN and CMEIE bits
+        self.corbctl().set_bit(0);
+        self.corbctl().set_bit(1);
+    }
+
+    pub fn start_rirb(&self) {
+        // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
+        self.rirbctl().set_bit(0);
+        self.rirbctl().set_bit(1);
+        self.rirbctl().set_bit(2);
+    }
+
+    pub fn send_command(&self, command: &Command) -> Response {
+        let response = self.immediate_command(command);
+        Response::from_raw_response(response)
     }
 }
 
@@ -342,120 +442,6 @@ impl ControllerRegisterSet {
 //     SSYNC(u8),
 // }
 
-#[derive(Getters)]
-pub struct RegisterInterface {
-    crs: ControllerRegisterSet,
-}
-
-impl RegisterInterface {
-    pub fn new(mmio_base_address: u64) -> Self {
-        RegisterInterface {
-            crs: ControllerRegisterSet::new(mmio_base_address),
-        }
-    }
-
-    pub fn reset_controller(&self) {
-        self.crs.reset_controller();
-    }
-
-    pub fn setup_ihda_config_space(&self) {
-        // set Accept Unsolicited Response Enable (UNSOL) bit
-        self.crs().gctl().set_bit(8);
-
-        // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
-        self.crs().intctl().set_bit(30);
-        self.crs().intctl().set_bit(31);
-
-        // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
-        self.crs().wakeen().set_all_bits();
-    }
-
-    pub fn init_corb(&self) {
-        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
-        self.crs().corbctl().clear_all_bits();
-
-        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
-        let corbsize = self.crs().corbsize().read() & 0b11;
-
-        assert_eq!(corbsize, 0b10);
-
-        // setup MMIO space for Command Outbound Ring Buffer – CORB
-        let corb_frame_range = memory::physical::alloc(1);
-        match corb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-
-                self.crs().corblbase().write(lbase);
-                self.crs().corbubase().write(ubase);
-            }
-        }
-
-        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
-        // IHDA::reset_corb(crs);
-    }
-
-    pub fn reset_corb(&self) {
-        // clear CORBWP
-        self.crs().corbwp().clear_all_bits();
-
-        //reset CORBRP
-        self.crs().corbrp().set_bit(15);
-        let start_timer = timer().read().systime_ms();
-        // value for CORBRPRST_TIMEOUT arbitrarily chosen
-        const CORBRPRST_TIMEOUT: usize = 10000;
-        while self.crs().corbrp().read() != 0x0 {
-            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
-                panic!("CORB read pointer reset timed out")
-            }
-        }
-        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
-        // actually you are supposed to read a 1 back from bit 15
-        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
-        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
-        // this is why the code now just checks if the register contains the value 0 after the reset
-        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
-    }
-
-    pub fn init_rirb(&self) {
-        // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
-        self.crs().rirbctl().clear_all_bits();
-
-        // setup MMIO space for Response Inbound Ring Buffer – RIRB
-        let rirb_frame_range = memory::physical::alloc(1);
-        match rirb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                self.crs().rirblbase().write(lbase);
-                self.crs().rirbubase().write(ubase);
-            }
-        }
-
-        // reset RIRBWP
-        self.crs().rirbwp().set_bit(15);
-    }
-
-    pub fn start_corb(&self) {
-        // set CORBRUN and CMEIE bits
-        self.crs().corbctl().set_bit(0);
-        self.crs().corbctl().set_bit(1);
-    }
-
-    pub fn start_rirb(&self) {
-        // set RIRBOIC, RIRBDMAEN  und RINTCTL bits
-        self.crs().rirbctl().set_bit(0);
-        self.crs().rirbctl().set_bit(1);
-        self.crs().rirbctl().set_bit(2);
-    }
-
-    pub fn send_command(&self, command: &Command) -> Response {
-        let response = self.crs.immediate_command(command);
-        Response::from_raw_response(response)
-    }
-}
 
 #[derive(Clone, Debug, Getters)]
 pub struct NodeAddress {
