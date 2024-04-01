@@ -676,8 +676,8 @@ impl SetAmplifierGainMutePayload {
             amp_type,
             side,
             index,
-            mute: false,
-            gain: 0,
+            mute,
+            gain,
         }
     }
 }
