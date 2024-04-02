@@ -7,7 +7,7 @@ use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::PhysFrame;
-use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command};
+use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command, StreamFormatResponse, SetStreamFormatPayload};
 use crate::device::pit::Timer;
 use crate::{memory, timer};
 
@@ -16,6 +16,7 @@ const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
 const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const MAX_AMOUNT_OF_BIDRECTIONAL_STREAMS: u8 = 30;
 const MAX_AMOUNT_OF_SDIN_SIGNALS: u8 = 15;
+const MAX_AMOUNT_OF_CHANNELS_PER_STREAM: u8 = 16;
 // TIMEOUT values arbitrarily chosen
 const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
@@ -104,6 +105,196 @@ impl StreamDescriptorRegisters {
             sdbdpu: Register::new((sd_base_address + 0x1C) as *mut u32, "SDDPU"),
         }
     }
+
+    // ########## SDCTL ##########
+    pub fn reset_stream(&self) {
+        self.clear_stream_run_bit();
+
+        self.sdctl.set_bit(0);
+        let mut start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        while !self.sdctl.assert_bit(0) {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
+                panic!("stream reset timed out after setting SRST bit")
+            }
+        }
+
+        self.sdctl.clear_bit(0);
+        start_timer = timer().read().systime_ms();
+        // value for CRST_TIMEOUT arbitrarily chosen
+        while self.sdctl.assert_bit(0) {
+            if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
+                panic!("stream reset timed out after clearing SRST bit")
+            }
+        }
+    }
+
+    pub fn assert_stream_run_bit(&self) -> bool {
+        self.sdctl.assert_bit(1)
+    }
+
+    pub fn set_stream_run_bit(&self) {
+        self.sdctl.set_bit(1);
+    }
+
+    pub fn clear_stream_run_bit(&self) {
+        self.sdctl.clear_bit(1);
+    }
+
+    pub fn assert_interrupt_on_completion_bit(&self) -> bool {
+        self.sdctl.assert_bit(2)
+    }
+
+    pub fn set_interrupt_on_completion_bit(&self) {
+        self.sdctl.set_bit(2);
+    }
+
+    pub fn clear_interrupt_on_completion_bit(&self) {
+        self.sdctl.clear_bit(2);
+    }
+
+    pub fn assert_fifo_interrupt_enable_bit(&self) -> bool {
+        self.sdctl.assert_bit(3)
+    }
+
+    pub fn set_fifo_interrupt_enable_bit(&self) {
+        self.sdctl.set_bit(3);
+    }
+
+    pub fn clear_fifo_interrupt_enable_bit(&self) {
+        self.sdctl.clear_bit(3);
+    }
+
+    pub fn assert_descriptor_error_interrupt_enable_bit(&self) -> bool {
+        self.sdctl.assert_bit(4)
+    }
+
+    pub fn set_descriptor_error_interrupt_enable_bit(&self) {
+        self.sdctl.set_bit(4);
+    }
+
+    pub fn clear_descriptor_error_interrupt_enable_bit(&self) {
+        self.sdctl.clear_bit(4);
+    }
+
+    // fn get_stripe_control();
+    // fn set_stripe_control();
+
+    pub fn assert_traffic_priority_enable_bit(&self) -> bool {
+        self.sdctl.assert_bit(18)
+    }
+
+    pub fn set_traffic_priority_enable_bit(&self) {
+        self.sdctl.set_bit(18);
+    }
+
+    pub fn clear_traffic_priority_enable_bit(&self) {
+        self.sdctl.clear_bit(18);
+    }
+
+    // fn set_bidirectional_stream_as_input()
+    // fn set_bidirectional_stream_as_output()
+
+    pub fn get_stream_number(&self) -> u8 {
+        match (self.sdctl.read() >> 20) & 0xF {
+            0 => panic!("IHDA sound card reports an invalid stream number"),
+            stream_number => stream_number as u8,
+        }
+    }
+
+    pub fn set_stream_number(&self, stream_number: u8) {
+        // REMINDER: the highest byte of self.sdctl.read() is the sdsts register and should not be modified
+        self.sdctl.write((self.sdctl.read() & 0xFF0F_FFFF) | ((stream_number as u32) << 20));
+    }
+
+    // ########## SDSTS ##########
+    pub fn assert_buffer_completion_interrupt_status_bit(&self) -> bool {
+        self.sdsts.assert_bit(2)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
+    pub fn clear_buffer_completion_interrupt_status_bit(&self) {
+        self.sdsts.set_bit(2);
+    }
+
+    pub fn assert_fifo_error_bit(&self) -> bool {
+        self.sdsts.assert_bit(3)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
+    pub fn clear_fifo_error_bit(&self) {
+        self.sdsts.set_bit(3);
+    }
+
+    pub fn assert_descriptor_error_bit(&self) -> bool {
+        self.sdsts.assert_bit(4)
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
+    pub fn clear_descriptor_error_bit(&self) {
+        self.sdsts.set_bit(4);
+    }
+
+    pub fn fifo_ready(&self) {
+        self.sdsts.assert_bit(5);
+    }
+
+    // ########## SDLPIB ##########
+    pub fn link_position_in_buffer(&self) -> u32 {
+        self.sdlpib.read()
+    }
+
+    // ########## SDCBL ##########
+    pub fn get_cyclic_buffer_lenght(&self) -> u32 {
+        self.sdcbl.read()
+    }
+
+    pub fn set_cyclic_buffer_lenght(&self, length: u32) {
+        if self.assert_stream_run_bit() {
+            panic!("Trying to write to SDCBL register while stream running is not allowed (see specification, section 3.3.38)");
+        }
+        self.sdcbl.write(length);
+    }
+
+    // ########## SDLVI ##########
+    pub fn get_last_valid_index(&self) -> u8 {
+        (self.sdlvi.read() & 0xFF) as u8
+    }
+
+    pub fn set_last_valid_index(&self, length: u8) {
+        if self.assert_stream_run_bit() {
+            panic!("Trying to write to SDLVI register while stream running is not allowed (see specification, section 3.3.38)");
+        }
+        self.sdlvi.write(length as u16);
+    }
+
+    // ########## SDFIFO ##########
+    pub fn fifo_size(&self) -> u16 {
+        self.sdfifod.read()
+    }
+
+    // ########## SDFMT ##########
+    // _TODO_: maybe refactor by returning StreamFormat struct (not existing yet), as StreamFormatResponse should only be associated to converter widgets' stream format, not the format of a stream
+    pub fn stream_format(&self) -> StreamFormatResponse {
+        StreamFormatResponse::new(self.sdfmt.read() as u32)
+    }
+
+    pub fn set_stream_format(&self, set_stream_format_payload: SetStreamFormatPayload) {
+        self.sdfmt.write(set_stream_format_payload.as_u16());
+    }
+
+    // ########## SDBDPL and SDBDPU ##########
+    pub fn set_bdl_pointer_address(&self, start_frame: PhysFrame) {
+        if self.assert_stream_run_bit() {
+            panic!("Trying to write to BDL address registers while stream running is not allowed (see specification, section 3.3.38)");
+        }
+        let start_address = start_frame.start_address().as_u64();
+        let lbase = (start_address & 0xFFFFFFFF) as u32;
+        let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+        self.sdbdpl.write(lbase);
+        self.sdbdpu.write(ubase);
+    }
 }
 
 // representation of all IHDA registers
@@ -159,9 +350,9 @@ impl RegisterInterface {
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
         let gctl = unsafe { (mmio_base_address as *mut u16).read() as u64 };
-        let input_stream_descriptor_amount = (gctl & 0x0F00) >> 8;
-        let output_stream_descriptor_amount = (gctl & 0xF000) >> 12;
-        let bidirectional_stream_descriptor_amount = (gctl & 0b0000_0000_1111_1000) >> 3;
+        let input_stream_descriptor_amount = (gctl >> 8) & 0xF;
+        let output_stream_descriptor_amount = (gctl >> 12) & 0xF;
+        let bidirectional_stream_descriptor_amount = (gctl >> 3) & 0b1_1111;
 
         let mut input_stream_descriptors = Vec::new();
         for index in 0..input_stream_descriptor_amount {

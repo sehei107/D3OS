@@ -365,15 +365,11 @@ impl IHDA {
         debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
         debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
 
-        // stop stream in case it is running
-        sd_registers.sdctl().clear_bit(1);
 
-        // reset stream
-        // sd_registers.sdctl().set_bit(0);
-        // sd_registers.sdctl().write(sd_registers.sdctl().read() & 0xFF1F_FFFD);
+        sd_registers.reset_stream();
 
-        // set stream number
-        sd_registers.sdctl().write(sd_registers.sdctl().read() | 0x10_0000);
+        sd_registers.set_stream_number(1);
+
 
         // setup MMIO space for buffer descriptor list
         // hard coded 8*4096 for 256 entries with 128 bits each
@@ -381,15 +377,7 @@ impl IHDA {
 
         debug!("bdl_base_address: {}", bdl_frame_range.start.start_address().as_u64());
 
-        match bdl_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                sd_registers.sdbdpl().write(lbase);
-                sd_registers.sdbdpu().write(ubase);
-            }
-        }
+        sd_registers.set_bdl_pointer_address(bdl_frame_range.start);
         unsafe { asm!("wbinvd"); }
         debug!("wbinvd");
 
@@ -397,8 +385,8 @@ impl IHDA {
 
         debug!("buffer descriptor list: {:?}", bdl);
 
-        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), true);
-        let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), true);
+        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
+        let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
 
         bdl.set_entry(0, &data_buffer0);
         bdl.set_entry(1, &data_buffer1);
@@ -424,20 +412,23 @@ impl IHDA {
             debug!("data_buffer1 sample at index {}: {}", index, data_buffer1.get_buffer_entry(index));
         }
 
-        Timer::wait(20000);
-
         data_buffer0.get_buffer_entry(0);
 
         // set cyclic buffer length
-        sd_registers.sdcbl().write(*data_buffer0.length_in_bytes() + *data_buffer1.length_in_bytes());
-        sd_registers.sdlvi().write(1);
+        sd_registers.set_cyclic_buffer_lenght(*data_buffer0.length_in_bytes() + *data_buffer1.length_in_bytes());
+        sd_registers.set_last_valid_index(1);
 
         // set stream format
         let stream_format = StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap();
-        sd_registers.sdfmt().write(SetStreamFormatPayload::from_response(stream_format).as_u16());
+        sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
 
+        debug!("run in two seconds!");
+        Timer::wait(2000);
         // run
-        sd_registers.sdctl().set_bit(1);
+        sd_registers.set_stream_run_bit();
+        // immediately after this run command gets executed on my testing device, I can hear a Dirac impulse over the line out jack
+        // this is the expected sound if the two buffers defined above only get played once each: _-
+        // instead of looped indefinitely: _-_-_-_-_-_-_-...
 
         debug!("----------------------------------------------------------------------------------");
         debug!("sdctl: {:#x}", sd_registers.sdctl().read());
