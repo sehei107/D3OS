@@ -22,6 +22,7 @@ const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
+const DMA_POSITION_IN_BUFFER_ENTRY_SIZE: u64 = 32;
 
 
 // representation of an IHDA register
@@ -737,14 +738,33 @@ impl RegisterInterface {
 
     // ########## DPLBASE and DPUBASE ##########
 
+    pub fn enable_dma_position_buffer(&self) {
+        self.dpiblbase.set_bit(0);
+    }
+
+    pub fn disable_dma_position_buffer(&self) {
+        self.dpiblbase.clear_bit(0);
+    }
+
+    pub fn dma_position_buffer_address(&self) -> u64 {
+        (self.dpibubase.read() as u64) << 32 | (self.dpiblbase.read() >> 1 << 1) as u64
+    }
+
     pub fn set_dma_position_buffer_address(&self, start_frame: PhysFrame) {
         // _TODO_: assert that the DMA engine is not running before writing to DPLASE and DPUBASE (see specification, section 3.3.18 and 3.3.19)
         let start_address = start_frame.start_address().as_u64();
         let lbase = (start_address & 0xFFFFFFFF) as u32;
         let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
 
-        self.dpiblbase.write(lbase);
+        // preserve DMA Position Buffer Enable bit at position 0 when writing address
+        self.dpiblbase.write(lbase | (self.dpiblbase.assert_bit(0) as u32));
         self.dpibubase.write(ubase);
+    }
+
+    pub fn stream_descriptor_position_in_current_buffer(&self, stream_descriptor_number: u32) -> u32 {
+        let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE);
+        debug!("address: {:#x}", address);
+        unsafe { (address as *mut u32).read() }
     }
 
     

@@ -357,7 +357,6 @@ impl IHDA {
 
         sd_registers.set_stream_number(1);
 
-
         // setup MMIO space for buffer descriptor list
         // hard coded 8*4096 for 256 entries with 128 bits each
         let bdl_frame_range = Self::alloc_no_cache_dma_memory(1);
@@ -416,8 +415,20 @@ impl IHDA {
         let stream_format = StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap();
         sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
 
-        debug!("run in two seconds!");
+        let dmapib_frame_range = Self::alloc_no_cache_dma_memory(1);
+
+        register_interface.set_dma_position_buffer_address(dmapib_frame_range.start);
+        register_interface.enable_dma_position_buffer();
+
         Timer::wait(2000);
+
+        for i in 0..1 {
+            debug!("dma_position_in_buffer of stream descriptor [{}]: {:#x}", i, register_interface.stream_descriptor_position_in_current_buffer(i));
+        }
+        debug!("dma_position_in_buffer of stream descriptor [0] before run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(0));
+
+        // debug!("run in one minute seconds!");
+        // Timer::wait(60000);
         // run
         sd_registers.set_stream_run_bit();
         // immediately after this run command gets executed on my testing device, I can hear a Dirac impulse over the line out jack
@@ -425,17 +436,20 @@ impl IHDA {
         // instead of looped indefinitely: _-_-_-_-_-_-_-...
 
         debug!("----------------------------------------------------------------------------------");
-        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
-        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
-        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
-        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
-        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
-        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
-        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
-        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
-        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
+        // debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        // debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        // debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        // debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
+        // debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
+        // debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
+        // debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
+        // debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
+        // debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
 
-        Timer::wait(60000);
+
+        debug!("dma_position_in_buffer of stream descriptor [0] after run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(0));
+
+        Timer::wait(600000);
     }
 
     fn alloc_no_cache_dma_memory(frame_count: usize) -> PhysFrameRange {
