@@ -307,7 +307,6 @@ impl IHDA {
     }
 
     fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &RegisterInterface) {
-
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
         debug!("pin widget: {:?}", pin_widget.address());
         register_interface.send_command(&SetAmplifierGainMute(pin_widget.address().clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
@@ -354,18 +353,6 @@ impl IHDA {
         // set stream descriptor
         let sd_registers = register_interface.output_stream_descriptors().get(0).unwrap();
 
-        debug!("----------------------------------------------------------------------------------");
-        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
-        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
-        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
-        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
-        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
-        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
-        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
-        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
-        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
-
-
         sd_registers.reset_stream();
 
         sd_registers.set_stream_number(1);
@@ -373,50 +360,57 @@ impl IHDA {
 
         // setup MMIO space for buffer descriptor list
         // hard coded 8*4096 for 256 entries with 128 bits each
-        let bdl_frame_range = memory::physical::alloc(1);
+        let bdl_frame_range = Self::alloc_no_cache_dma_memory(1);
 
         debug!("bdl_base_address: {}", bdl_frame_range.start.start_address().as_u64());
 
         sd_registers.set_bdl_pointer_address(bdl_frame_range.start);
-        unsafe { asm!("wbinvd"); }
-        debug!("wbinvd");
 
         let bdl = BufferDescriptorList::new(bdl_frame_range);
 
+
         debug!("buffer descriptor list: {:?}", bdl);
 
-        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
-        let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
+        for i in 0..255 {
+            let frame_range = Self::alloc_no_cache_dma_memory(1);
+            let data_buffer = BufferDescriptorListEntry::new(frame_range, false);
+            bdl.set_entry(i, &data_buffer);
+            for j in 0..(data_buffer.length_in_bytes() / 4) {
+                if i%2 == 0 {
+                    data_buffer.set_buffer_entry(j, 0b1111_1111_1111_1111_1111_1111_0000_0000);
+                } else {
+                    data_buffer.set_buffer_entry(j, 0b1111_1111_0000_0000);
+                }
+            }
+        }
 
-        bdl.set_entry(0, &data_buffer0);
-        bdl.set_entry(1, &data_buffer1);
-        unsafe { asm!("wbinvd"); }
-        debug!("wbinvd");
+        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
+        // let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
+        //
+        // bdl.set_entry(0, &data_buffer0);
+        // bdl.set_entry(1, &data_buffer1);
 
         debug!("bdl entry 0: {:?}", bdl.get_entry(0));
         debug!("bdl entry 1: {:?}", bdl.get_entry(1));
         debug!("bdl entry 2: {:?}", bdl.get_entry(2));
 
-        debug!("data_buffer0 address: {:?}", data_buffer0.address());
-        debug!("data_buffer1 address: {:?}", data_buffer1.address());
-        debug!("data_buffer0 address: {:?}", data_buffer0.length_in_bytes());
-        debug!("data_buffer1 address: {:?}", data_buffer1.length_in_bytes());
+        // debug!("data_buffer0 address: {:?}", data_buffer0.address());
+        // debug!("data_buffer1 address: {:?}", data_buffer1.address());
+        // debug!("data_buffer0 address: {:?}", data_buffer0.length_in_bytes());
+        // debug!("data_buffer1 address: {:?}", data_buffer1.length_in_bytes());
 
-        for index in 0..(data_buffer0.length_in_bytes() / 4) {
-            data_buffer0.set_buffer_entry(index, 0b1111_1111_1111_1111_1111_1111_0000_0000);
-            data_buffer1.set_buffer_entry(index, 0b1111_1111_0000_0000);
-        }
 
-        for index in 0..5 {
-            debug!("data_buffer0 sample at index {}: {}", index, data_buffer0.get_buffer_entry(index));
-            debug!("data_buffer1 sample at index {}: {}", index, data_buffer1.get_buffer_entry(index));
-        }
+
+        // for index in 0..5 {
+        //     debug!("data_buffer0 sample at index {}: {}", index, data_buffer0.get_buffer_entry(index));
+        //     debug!("data_buffer1 sample at index {}: {}", index, data_buffer1.get_buffer_entry(index));
+        // }
 
         data_buffer0.get_buffer_entry(0);
 
         // set cyclic buffer length
-        sd_registers.set_cyclic_buffer_lenght(*data_buffer0.length_in_bytes() + *data_buffer1.length_in_bytes());
-        sd_registers.set_last_valid_index(1);
+        sd_registers.set_cyclic_buffer_lenght(*data_buffer0.length_in_bytes() * 256);
+        sd_registers.set_last_valid_index(255);
 
         // set stream format
         let stream_format = StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap();
@@ -444,18 +438,15 @@ impl IHDA {
         Timer::wait(60000);
     }
 
-    fn allocate_data_buffer() -> PhysFrameRange {
-        // let container_size_in_bits = match stream_format_info.bits_per_sample() {
-        //     BitsPerSample::Eight => 8,
-        //     BitsPerSample::Sixteen => 16,
-        //     BitsPerSample::Twenty => 16,
-        //     BitsPerSample::Twentyfour => 32,
-        //     BitsPerSample::Thirtytwo => 32,
-        // };
-        // let block_size_in_bits = container_size_in_bits * stream_format_info.number_of_channels();
-        // let packet_size_in_bits = block_size_in_bits * stream_format_info.sample_base_rate_multiple() / stream_format_info.sample_base_rate_divisor();
+    fn alloc_no_cache_dma_memory(frame_count: usize) -> PhysFrameRange {
+        let phys_frame_range = memory::physical::alloc(frame_count);
 
+        let kernel_address_space = process_manager().read().kernel_process().unwrap().address_space();
+        let start_page = Page::from_start_address(VirtAddr::new(phys_frame_range.start.start_address().as_u64())).unwrap();
+        let end_page = Page::from_start_address(VirtAddr::new(phys_frame_range.end.start_address().as_u64())).unwrap();
+        let phys_page_range = PageRange { start: start_page, end: end_page };
+        kernel_address_space.set_flags(phys_page_range, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
 
-        memory::physical::alloc(1)
+        phys_frame_range
     }
 }
