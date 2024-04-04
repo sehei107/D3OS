@@ -2,7 +2,6 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::arch::asm;
 use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
@@ -15,7 +14,8 @@ use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager};
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, StreamFormatResponse, ChannelStreamIdResponse, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload};
 use crate::device::ihda_node_communication::Command::{GetChannelStreamId, GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, GetStreamFormat, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl};
 use crate::device::ihda_node_communication::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry};
+use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry, AudioBuffer48kHz24BitStereo, SampleContainer};
+use crate::device::ihda_types::BitDepth::BitDepth24Bit;
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -356,6 +356,27 @@ impl IHDA {
         sd_registers.reset_stream();
 
         sd_registers.set_stream_number(1);
+
+
+
+
+        let audio_buffer = AudioBuffer48kHz24BitStereo::new(Self::alloc_no_cache_dma_memory(1));
+
+        debug!("audiobuffer_base_address: {:#x}", audio_buffer.start_address());
+        unsafe { debug!("audio_buffer first entry: {:#x}", (*audio_buffer.start_address() as *mut u32).read()) }
+        unsafe { debug!("audio_buffer second entry: {:#x}", ((*audio_buffer.start_address() + 32) as *mut u32).read()) }
+        debug!("sample0: {:#x}", audio_buffer.read_sample_from_buffer(0));
+        debug!("sample1: {:#x}", audio_buffer.read_sample_from_buffer(1));
+        audio_buffer.write_sample_to_buffer(SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit), 1);
+        debug!("sample0: {:#x}", audio_buffer.read_sample_from_buffer(0));
+        debug!("sample1: {:#x}", audio_buffer.read_sample_from_buffer(1));
+        unsafe { debug!("audio_buffer first entry: {:#x}", (*audio_buffer.start_address() as *mut u32).read()) }
+        unsafe { debug!("audio_buffer second entry: {:#x}", ((*audio_buffer.start_address() + 32) as *mut u32).read()) }
+        unsafe { debug!("audio_buffer first two entry: {:#x}", (*audio_buffer.start_address() as *mut u64).read()) }
+
+        Timer::wait(200000);
+
+
 
         // setup MMIO space for buffer descriptor list
         // hard coded 8*4096 for 256 entries with 128 bits each

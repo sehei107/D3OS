@@ -264,7 +264,7 @@ pub enum SetAmplifierGainMuteSide {
     Both,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Getters)]
 pub struct SetStreamFormatPayload {
     number_of_channels: u8,
     bits_per_sample: BitsPerSample,

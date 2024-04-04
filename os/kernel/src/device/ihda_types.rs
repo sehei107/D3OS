@@ -10,6 +10,7 @@ use x86_64::structures::paging::PhysFrame;
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command, StreamFormatResponse, SetStreamFormatPayload};
 use crate::device::pit::Timer;
 use crate::{memory, timer};
+use crate::device::ihda_types::Sample::{Sample16Bit, Sample20Bit, Sample24Bit, Sample32Bit, Sample8Bit};
 
 const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
 const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
@@ -23,6 +24,7 @@ const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
 const DMA_POSITION_IN_BUFFER_ENTRY_SIZE: u64 = 32;
+const CONTAINER_SIZE_FOR_24BIT_SAMPLE: u32 = 32;
 
 
 // representation of an IHDA register
@@ -1150,7 +1152,7 @@ impl BufferDescriptorListEntry {
 #[derive(Debug, Getters)]
 pub struct BufferDescriptorList {
     base_address: u64,
-    max_amount_of_entries: u16
+    max_amount_of_entries: u16,
 }
 
 impl BufferDescriptorList {
@@ -1187,3 +1189,128 @@ impl BufferDescriptorList {
         (self.max_amount_of_entries - 1) as u8
     }
 }
+
+#[derive(Clone, Debug)]
+pub enum BitDepth {
+    BitDepth8Bit,
+    BitDepth16Bit,
+    BitDepth20Bit,
+    BitDepth24Bit,
+    BitDepth32Bit,
+}
+
+#[derive(Clone, Debug)]
+pub enum Sample {
+    Sample8Bit(u8),
+    Sample16Bit(u16),
+    Sample20Bit(u32),
+    Sample24Bit(u32),
+    Sample32Bit(u32),
+}
+
+
+#[derive(Debug, Getters)]
+pub struct SampleContainer {
+    value: Sample,
+}
+
+impl SampleContainer {
+    pub fn from(value: u32, bit_depth: BitDepth) -> Self {
+        match bit_depth {
+            BitDepth::BitDepth8Bit => {
+                if value > 2.pow(8) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample8Bit(value as u8),
+                }
+            }
+            BitDepth::BitDepth16Bit => {
+                if value > 2.pow(16) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample16Bit(value as u16),
+                }
+            }
+            BitDepth::BitDepth20Bit => {
+                if value > 2.pow(20) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample20Bit(value),
+                }
+            }
+            BitDepth::BitDepth24Bit => {
+                if value > 2.pow(24) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample24Bit(value),
+                }
+            }
+            BitDepth::BitDepth32Bit => {
+                if value > 2.pow(32) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample32Bit(value)
+                }
+            }
+        }
+    }
+
+    pub fn as_unsigned<T: PrimInt>(&self) -> T {
+        match self.value {
+            Sample8Bit(value) => { T::from(value).unwrap() }
+            Sample16Bit(value) => { T::from(value).unwrap() }
+            Sample20Bit(value) => { T::from(value).unwrap() }
+            Sample24Bit(value) => { T::from(value).unwrap() }
+            Sample32Bit(value) => { T::from(value).unwrap() }
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct AudioBuffer48kHz24BitStereo {
+    start_address: u64,
+    last_valid_index_in_buffer: u32,
+}
+
+impl AudioBuffer48kHz24BitStereo {
+    pub fn new(phys_frame_range: PhysFrameRange) -> Self {
+        let start_address_inclusive = phys_frame_range.start.start_address().as_u64();
+        let end_address_exclusive = phys_frame_range.end.start_address().as_u64();
+        Self {
+            start_address: start_address_inclusive,
+            last_valid_index_in_buffer: (((end_address_exclusive - start_address_inclusive) as u32) / CONTAINER_SIZE_FOR_24BIT_SAMPLE) - 1
+        }
+    }
+
+    pub fn read_sample_from_buffer(&self, index: u64) -> u32 {
+        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64));
+        debug!("read_address: {:#x}", address);
+        unsafe { (address as *mut u32).read() }
+    }
+
+    pub fn write_sample_to_buffer(&self, sample_container: SampleContainer, index: u64) {
+        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64));
+        debug!("write_address: {:#x}", address);
+        unsafe { (address as *mut u32).write(sample_container.as_unsigned()); }
+    }
+
+}
+
+
+//
+// #[derive(Debug, Getters)]
+// pub struct CyclicBuffer {
+//     frame_range: PhysFrameRange,
+//
+// }
+//
+// impl CyclicBuffer {
+//     fn new() -> Self {
+//
+//     }
+// }
