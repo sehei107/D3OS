@@ -6,11 +6,14 @@ use log::{debug, info};
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
-use x86_64::structures::paging::PhysFrame;
+use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame};
+use x86_64::structures::paging::page::PageRange;
+use x86_64::VirtAddr;
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command, StreamFormatResponse, SetStreamFormatPayload};
 use crate::device::pit::Timer;
-use crate::{memory, timer};
+use crate::{memory, process_manager, timer};
 use crate::device::ihda_types::Sample::{Sample16Bit, Sample20Bit, Sample24Bit, Sample32Bit, Sample8Bit};
+use crate::memory::PAGE_SIZE;
 
 const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
 const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
@@ -1109,15 +1112,7 @@ pub struct BufferDescriptorListEntry {
 }
 
 impl BufferDescriptorListEntry {
-    pub fn new(frame_range: PhysFrameRange, interrupt_on_completion: bool) -> Self {
-        let address;
-        let length_in_bytes;
-        match frame_range {
-            PhysFrameRange { start, end } => {
-                address = start.start_address().as_u64();
-                length_in_bytes = ((end.start_address().as_u64() - address) / 8 ) as u32;
-            }
-        }
+    pub fn new(address: u64, length_in_bytes: u32, interrupt_on_completion: bool) -> Self {
         Self {
             address,
             length_in_bytes,
@@ -1209,7 +1204,7 @@ pub enum Sample {
 }
 
 
-#[derive(Debug, Getters)]
+#[derive(Clone, Debug, Getters)]
 pub struct SampleContainer {
     value: Sample,
 }
@@ -1274,6 +1269,8 @@ impl SampleContainer {
 #[derive(Debug, Getters)]
 pub struct AudioBuffer48kHz24BitStereo {
     start_address: u64,
+    length_in_bytes: u32,
+    max_number_of_samples: u32,
     last_valid_index_in_buffer: u32,
 }
 
@@ -1281,9 +1278,12 @@ impl AudioBuffer48kHz24BitStereo {
     pub fn new(phys_frame_range: PhysFrameRange) -> Self {
         let start_address_inclusive = phys_frame_range.start.start_address().as_u64();
         let end_address_exclusive = phys_frame_range.end.start_address().as_u64();
+        let max_number_of_samples = ((end_address_exclusive - start_address_inclusive) as u32) / CONTAINER_SIZE_FOR_24BIT_SAMPLE;
         Self {
             start_address: start_address_inclusive,
-            last_valid_index_in_buffer: (((end_address_exclusive - start_address_inclusive) as u32) / CONTAINER_SIZE_FOR_24BIT_SAMPLE) - 1
+            length_in_bytes: max_number_of_samples * 4,
+            max_number_of_samples,
+            last_valid_index_in_buffer: max_number_of_samples - 1,
         }
     }
 
@@ -1302,15 +1302,69 @@ impl AudioBuffer48kHz24BitStereo {
 }
 
 
-//
-// #[derive(Debug, Getters)]
-// pub struct CyclicBuffer {
-//     frame_range: PhysFrameRange,
-//
-// }
-//
-// impl CyclicBuffer {
-//     fn new() -> Self {
-//
-//     }
-// }
+
+#[derive(Debug, Getters)]
+pub struct CyclicBuffer {
+    total_frame_range: PhysFrameRange,
+    length_in_bytes: u32,
+    audio_buffers: Vec<AudioBuffer48kHz24BitStereo>,
+    cyclic_buffer_length_in_samples: u32,
+    last_valid_index: u8,
+    last_valid_address: *mut u32,
+    next_sample_pointer: *mut u32,
+
+}
+
+impl CyclicBuffer {
+    pub fn new(buffer_amount: usize, size_per_buffer_in_4kib_pages: usize) -> Self {
+        let mut cyclic_buffer_length_in_samples = 0;
+        let mut length_in_bytes = 0;
+        let mut audio_buffers = Vec::new();
+        let total_frame_range = alloc_no_cache_dma_memory(buffer_amount * size_per_buffer_in_4kib_pages);
+        let cyclic_buffer_base_address = total_frame_range.start.start_address();
+        let last_valid_address = (total_frame_range.end.start_address().as_u64() - CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64) as *mut u32;
+        for index in 0..buffer_amount {
+            let buffer_size = size_per_buffer_in_4kib_pages * PAGE_SIZE;
+            let start_frame = PhysFrame::from_start_address(cyclic_buffer_base_address + (index * buffer_size)).unwrap();
+            let end_frame = PhysFrame::from_start_address(cyclic_buffer_base_address + ((index + 1) * buffer_size)).unwrap();
+            let buffer_range = PhysFrameRange { start: start_frame, end: end_frame };
+            let buffer = AudioBuffer48kHz24BitStereo::new(buffer_range);
+            cyclic_buffer_length_in_samples += buffer.max_number_of_samples();
+            length_in_bytes += buffer.length_in_bytes();
+            audio_buffers.push(buffer);
+        }
+        let last_valid_index = (audio_buffers.len() - 1) as u8;
+        Self {
+            total_frame_range,
+            length_in_bytes,
+            audio_buffers,
+            cyclic_buffer_length_in_samples,
+            last_valid_index,
+            last_valid_address,
+            next_sample_pointer: cyclic_buffer_base_address.as_u64() as *mut u32,
+        }
+    }
+
+    pub fn push_samples(&mut self, samples: Vec<SampleContainer>) {
+        for sample in samples {
+            unsafe { self.next_sample_pointer.write(sample.as_unsigned()) }
+            self.next_sample_pointer = (self.next_sample_pointer as u64 + CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64) as *mut u32;
+            if self.next_sample_pointer as u64 >= self.total_frame_range.end.start_address().as_u64() {
+                self.next_sample_pointer = self.total_frame_range.start.start_address().as_u64() as *mut u32;
+            }
+        }
+        // debug!("samples pushed until address (excluxive) {:#x}", self.next_sample_pointer as u64);
+    }
+}
+
+pub fn alloc_no_cache_dma_memory(frame_count: usize) -> PhysFrameRange {
+    let phys_frame_range = memory::physical::alloc(frame_count);
+
+    let kernel_address_space = process_manager().read().kernel_process().unwrap().address_space();
+    let start_page = Page::from_start_address(VirtAddr::new(phys_frame_range.start.start_address().as_u64())).unwrap();
+    let end_page = Page::from_start_address(VirtAddr::new(phys_frame_range.end.start_address().as_u64())).unwrap();
+    let phys_page_range = PageRange { start: start_page, end: end_page };
+    kernel_address_space.set_flags(phys_page_range, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
+
+    phys_frame_range
+}

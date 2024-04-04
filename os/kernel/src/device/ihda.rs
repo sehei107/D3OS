@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::BitOr;
 use log::{debug, info};
@@ -14,7 +15,7 @@ use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager};
 use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, StreamFormatResponse, ChannelStreamIdResponse, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload};
 use crate::device::ihda_node_communication::Command::{GetChannelStreamId, GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, GetStreamFormat, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl};
 use crate::device::ihda_node_communication::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry, AudioBuffer48kHz24BitStereo, SampleContainer};
+use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry, AudioBuffer48kHz24BitStereo, SampleContainer, alloc_no_cache_dma_memory, CyclicBuffer};
 use crate::device::ihda_types::BitDepth::BitDepth24Bit;
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
@@ -360,7 +361,7 @@ impl IHDA {
 
 
 
-        let audio_buffer = AudioBuffer48kHz24BitStereo::new(Self::alloc_no_cache_dma_memory(1));
+        let audio_buffer = AudioBuffer48kHz24BitStereo::new(alloc_no_cache_dma_memory(1));
 
         debug!("audiobuffer_base_address: {:#x}", audio_buffer.start_address());
         unsafe { debug!("audio_buffer first entry: {:#x}", (*audio_buffer.start_address() as *mut u32).read()) }
@@ -374,13 +375,22 @@ impl IHDA {
         unsafe { debug!("audio_buffer second entry: {:#x}", ((*audio_buffer.start_address() + 32) as *mut u32).read()) }
         unsafe { debug!("audio_buffer first two entry: {:#x}", (*audio_buffer.start_address() as *mut u64).read()) }
 
-        Timer::wait(200000);
+        let mut cyclic_buffer = CyclicBuffer::new(2, 2048);
 
+        let low = vec![SampleContainer::from(0b0, BitDepth24Bit); 32];
+        let high = vec![SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit); 32];
+
+        for _ in 0..(*cyclic_buffer.cyclic_buffer_length_in_samples() as usize) / (low.len() + high.len()) {
+            cyclic_buffer.push_samples(vec![SampleContainer::from(0b0, BitDepth24Bit); 32]);
+            cyclic_buffer.push_samples(vec![SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit); 32]);
+        }
+
+        debug!("cyclic_buffer start address: {:#x}, end address: {:#x}, sample pointer: {:?}", cyclic_buffer.total_frame_range().start.start_address().as_u64(), cyclic_buffer.total_frame_range().end.start_address().as_u64(), cyclic_buffer.next_sample_pointer());
 
 
         // setup MMIO space for buffer descriptor list
         // hard coded 8*4096 for 256 entries with 128 bits each
-        let bdl_frame_range = Self::alloc_no_cache_dma_memory(1);
+        let bdl_frame_range = alloc_no_cache_dma_memory(1);
 
         debug!("bdl_base_address: {}", bdl_frame_range.start.start_address().as_u64());
 
@@ -388,55 +398,32 @@ impl IHDA {
 
         let bdl = BufferDescriptorList::new(bdl_frame_range);
 
-
-        debug!("buffer descriptor list: {:?}", bdl);
-
-        for i in 0..255 {
-            let frame_range = Self::alloc_no_cache_dma_memory(1);
-            let data_buffer = BufferDescriptorListEntry::new(frame_range, false);
-            bdl.set_entry(i, &data_buffer);
-            for j in 0..(data_buffer.length_in_bytes() / 4) {
-                if i%2 == 0 {
-                    data_buffer.set_buffer_entry(j, 0b1111_1111_1111_1111_1111_1111_0000_0000);
-                } else {
-                    data_buffer.set_buffer_entry(j, 0b1111_1111_0000_0000);
-                }
+        let mut count = 0;
+        for buffer in cyclic_buffer.audio_buffers() {
+            let bdl_entry = BufferDescriptorListEntry::new(*buffer.start_address(), *buffer.length_in_bytes(), true);
+            // debug!("buffer start address: {:#x}, last valid index: {}", buffer.start_address(), buffer.last_valid_index_in_buffer());
+            bdl.set_entry(count, &bdl_entry);
+            if count <= 255 {
+                count += 1;
             }
         }
 
-        let data_buffer0 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
-        // let data_buffer1 = BufferDescriptorListEntry::new(memory::physical::alloc(1), false);
-        //
-        // bdl.set_entry(0, &data_buffer0);
-        // bdl.set_entry(1, &data_buffer1);
+        debug!("buffer descriptor list: {:?}", bdl);
 
         debug!("bdl entry 0: {:?}", bdl.get_entry(0));
         debug!("bdl entry 1: {:?}", bdl.get_entry(1));
         debug!("bdl entry 2: {:?}", bdl.get_entry(2));
 
-        // debug!("data_buffer0 address: {:?}", data_buffer0.address());
-        // debug!("data_buffer1 address: {:?}", data_buffer1.address());
-        // debug!("data_buffer0 address: {:?}", data_buffer0.length_in_bytes());
-        // debug!("data_buffer1 address: {:?}", data_buffer1.length_in_bytes());
-
-
-
-        // for index in 0..5 {
-        //     debug!("data_buffer0 sample at index {}: {}", index, data_buffer0.get_buffer_entry(index));
-        //     debug!("data_buffer1 sample at index {}: {}", index, data_buffer1.get_buffer_entry(index));
-        // }
-
-        data_buffer0.get_buffer_entry(0);
 
         // set cyclic buffer length
-        sd_registers.set_cyclic_buffer_lenght(*data_buffer0.length_in_bytes() * 256);
-        sd_registers.set_last_valid_index(255);
+        sd_registers.set_cyclic_buffer_lenght(*cyclic_buffer.length_in_bytes());
+        sd_registers.set_last_valid_index(*cyclic_buffer.last_valid_index());
 
         // set stream format
         let stream_format = StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap();
         sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
 
-        let dmapib_frame_range = Self::alloc_no_cache_dma_memory(1);
+        let dmapib_frame_range = alloc_no_cache_dma_memory(1);
 
         register_interface.set_dma_position_buffer_address(dmapib_frame_range.start);
         register_interface.enable_dma_position_buffer();
@@ -457,31 +444,19 @@ impl IHDA {
         // instead of looped indefinitely: _-_-_-_-_-_-_-...
 
         debug!("----------------------------------------------------------------------------------");
-        // debug!("sdctl: {:#x}", sd_registers.sdctl().read());
-        // debug!("sdsts: {:#x}", sd_registers.sdsts().read());
-        // debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
-        // debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
-        // debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
-        // debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
-        // debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
-        // debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
-        // debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
+        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
+        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
+        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
+        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
+        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
+        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
 
 
         debug!("dma_position_in_buffer of stream descriptor [0] after run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(0));
 
         Timer::wait(600000);
-    }
-
-    fn alloc_no_cache_dma_memory(frame_count: usize) -> PhysFrameRange {
-        let phys_frame_range = memory::physical::alloc(frame_count);
-
-        let kernel_address_space = process_manager().read().kernel_process().unwrap().address_space();
-        let start_page = Page::from_start_address(VirtAddr::new(phys_frame_range.start.start_address().as_u64())).unwrap();
-        let end_page = Page::from_start_address(VirtAddr::new(phys_frame_range.end.start_address().as_u64())).unwrap();
-        let phys_page_range = PageRange { start: start_page, end: end_page };
-        kernel_address_space.set_flags(phys_page_range, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE);
-
-        phys_frame_range
     }
 }
