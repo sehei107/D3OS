@@ -29,6 +29,8 @@ pub enum Command {
     GetEAPDBTLEnable(NodeAddress),
     SetEAPDBTLEnable(NodeAddress, SetEAPDBTLEnablePayload),
     GetConfigurationDefault(NodeAddress),
+    GetConverterChannelCount(NodeAddress),
+    SetConverterChannelCount(NodeAddress, SetConverterChannelCountPayload),
 }
 
 impl Command {
@@ -49,6 +51,8 @@ impl Command {
             Command::GetEAPDBTLEnable(..) => 0xF0C,
             Command::SetEAPDBTLEnable(..) => 0x70C,
             Command::GetConfigurationDefault(..) => 0xF1C,
+            Command::GetConverterChannelCount(..) => 0xF2D,
+            Command::SetConverterChannelCount(..) => 0x72D,
         }
     }
 
@@ -69,6 +73,8 @@ impl Command {
             Command::GetEAPDBTLEnable(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
             Command::SetEAPDBTLEnable(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
             Command::GetConfigurationDefault(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::GetConverterChannelCount(node_address) => Self::command_with_12bit_identifier_verb(node_address, self.id(), 0x0),
+            Command::SetConverterChannelCount(node_address, payload) => Self::command_with_12bit_identifier_verb(node_address, self.id(), payload.as_u8()),
         }
     }
 
@@ -417,6 +423,23 @@ impl SetEAPDBTLEnablePayload {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SetConverterChannelCountPayload {
+    converter_channel_count: u8,
+}
+
+impl SetConverterChannelCountPayload {
+    pub fn new(converter_channel_count: u8) -> Self {
+        Self {
+            converter_channel_count,
+        }
+    }
+
+    pub fn as_u8(&self) -> u8 {
+        self.converter_channel_count
+    }
+}
+
 
 
 // ############################################## IHDA responses ##############################################
@@ -462,6 +485,7 @@ pub enum Response {
     PinWidgetControl(PinWidgetControlResponse),
     EAPDBTLEnable(EAPDBTLEnableResponse),
     ConfigurationDefault(ConfigurationDefaultResponse),
+    ConverterChannelCount(ConverterChannelCountResponse),
     SetInfo,
 }
 
@@ -502,6 +526,8 @@ impl Response {
             Command::GetEAPDBTLEnable(..) => Response::EAPDBTLEnable(EAPDBTLEnableResponse::new(response.raw_value)),
             Command::SetEAPDBTLEnable(..) => Response::SetInfo,
             Command::GetConfigurationDefault(..) => Response::ConfigurationDefault(ConfigurationDefaultResponse::new(response.raw_value)),
+            Command::GetConverterChannelCount(..) => Response::ConverterChannelCount(ConverterChannelCountResponse::new(response.raw_value)),
+            Command::SetConverterChannelCount(..) => Response::SetInfo,
         }
     }
 }
@@ -1508,6 +1534,30 @@ pub enum ConfigDefColor {
     Pink,
     White,
     Other
+}
+
+#[derive(Debug, Getters)]
+pub struct ConverterChannelCountResponse {
+    converter_channel_count: u8,
+}
+
+impl ConverterChannelCountResponse {
+    pub fn new(response: u32) -> Self {
+        Self {
+            converter_channel_count: response.bitand(0xFF) as u8,
+        }
+    }
+}
+
+impl TryFrom<Response> for ConverterChannelCountResponse {
+    type Error = Response;
+
+    fn try_from(info_wrapped: Response) -> Result<Self, Self::Error> {
+        match info_wrapped {
+            Response::ConverterChannelCount(info) => Ok(info),
+            e => Err(e),
+        }
+    }
 }
 
 
