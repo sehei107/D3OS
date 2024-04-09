@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
-use log::{debug, info};
+use log::debug;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
 use x86_64::structures::paging::frame::PhysFrameRange;
@@ -24,10 +24,12 @@ const MAX_AMOUNT_OF_CHANNELS_PER_STREAM: u8 = 16;
 // TIMEOUT values arbitrarily chosen
 const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
-const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u8 = 128;
-const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u16 = 256;
+const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u64 = 128;
+const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u64 = 256;
 const DMA_POSITION_IN_BUFFER_ENTRY_SIZE: u64 = 32;
 const CONTAINER_SIZE_FOR_24BIT_SAMPLE: u32 = 32;
+const CONTAINER_SIZE_FOR_32BIT_SAMPLE: u32 = 32;
+
 
 
 // representation of an IHDA register
@@ -290,16 +292,17 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDBDPL and SDBDPU ##########
-    pub fn set_bdl_pointer_address(&self, start_frame: PhysFrame) {
+    pub fn set_bdl_pointer_address(&self, address: u64) {
         if self.assert_stream_run_bit() {
             panic!("Trying to write to BDL address registers while stream running is not allowed (see specification, section 3.3.38)");
         }
-        let start_address = start_frame.start_address().as_u64();
-        let lbase = (start_address & 0xFFFFFFFF) as u32;
-        let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
 
-        self.sdbdpl.write(lbase);
-        self.sdbdpu.write(ubase);
+        self.sdbdpl.write((address & 0xFFFFFFFF) as u32);
+        self.sdbdpu.write(((address & 0xFFFFFFFF_00000000) >> 32) as u32);
+    }
+
+    pub fn bdl_pointer_address(&self) -> u64 {
+        ((self.sdbdpu.read() as u64) << 32) | self.sdbdpl.read() as u64
     }
 }
 
@@ -768,7 +771,7 @@ impl RegisterInterface {
 
     pub fn stream_descriptor_position_in_current_buffer(&self, stream_descriptor_number: u32) -> u32 {
         let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE);
-        debug!("address: {:#x}", address);
+        // debug!("address: {:#x}", address);
         unsafe { (address as *mut u32).read() }
     }
 
@@ -1133,57 +1136,122 @@ impl BufferDescriptorListEntry {
     pub fn as_u128(&self) -> u128 {
         (self.interrupt_on_completion as u128) << 96 | (self.length_in_bytes as u128) << 64 | self.address as u128
     }
-
-    pub fn get_buffer_entry(&self, index: u32) -> u32 {
-        unsafe { ((self.address + (index as u64 * 32u64)) as *mut u32).read() }
-    }
-
-    pub fn set_buffer_entry(&self, index: u32, entry: u32) {
-        unsafe { ((self.address + (index as u64 * 32u64)) as *mut u32).write(entry) };
-
-    }
 }
 
 #[derive(Debug, Getters)]
 pub struct BufferDescriptorList {
     base_address: u64,
-    max_amount_of_entries: u16,
+    entries: Vec<BufferDescriptorListEntry>,
+    last_valid_index: u8,
 }
 
 impl BufferDescriptorList {
-    pub fn new(bdl_frame_range: PhysFrameRange) -> Self {
-        let (bdl_base_address, max_amount_of_entries) = match bdl_frame_range {
-            PhysFrameRange { start, end } => {
-                let start = start.start_address().as_u64();
-                let mut max_amount_of_entries = (end.start_address().as_u64() - start) / BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u64;
-                if max_amount_of_entries > MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES as u64 {
-                    max_amount_of_entries = MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES as u64;
-                    info!("WARNING: More memory for buffer descriptor list allocated than necessary")
-                }
-                (start, max_amount_of_entries as u16)
+    pub fn new(cyclic_buffer: &CyclicBuffer) -> Self {
+        // setup MMIO space for buffer descriptor list
+        // allocate one 4096 bit page which has space for 32 bdl entries with 128 bit each
+        // a bdl needs to provide space for at least two entries (256 bit), see specification, section 3.6.2
+        const BDL_CAPACITY: u16 = 32;
+        let amount_of_entries = cyclic_buffer.audio_buffers().len() as u16;
+        if amount_of_entries > BDL_CAPACITY {
+            panic!("At the moment a BDL can't have more than 32 entries")
+        }
+        let bdl_frame_range = alloc_no_cache_dma_memory(1);
+
+        let base_address = match bdl_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                start.start_address().as_u64()
             }
         };
 
+        let mut entries = Vec::new();
+        for buffer in cyclic_buffer.audio_buffers().iter() {
+            // interrupt on completion temporarily hard coded to false for all buffers
+            entries.push(BufferDescriptorListEntry::new(*buffer.start_address(), *buffer.length_in_bytes(), false))
+        }
+
         Self {
-            base_address: bdl_base_address,
-            max_amount_of_entries,
+            base_address,
+            entries,
+            last_valid_index: (amount_of_entries - 1) as u8,
         }
     }
 
-    pub fn get_entry(&self, index: u8) -> BufferDescriptorListEntry {
-        let raw_data = unsafe { ((self.base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).read() };
+    pub fn get_entry(&self, index: u64) -> BufferDescriptorListEntry {
+        let address = (self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS)) as *mut u128;
+        // debug!("bdl entry [{}] address: {:#x}", index, address);
+        let raw_data = unsafe { address.read() };
         BufferDescriptorListEntry::from(raw_data)
     }
 
-    pub fn set_entry(&self, index: u8, entry: &BufferDescriptorListEntry) {
-        unsafe { ((self.base_address as u128 + (index as u128 * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS as u128)) as *mut u128).write(entry.as_u128()) };
+    pub fn set_entry(&self, index: u64, entry: &BufferDescriptorListEntry) {
+        let address = (self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS)) as *mut u128;
+        unsafe { address.write(entry.as_u128()) };
 
-    }
-
-    pub fn last_valid_index(&self) -> u8 {
-        (self.max_amount_of_entries - 1) as u8
     }
 }
+
+
+#[derive(Debug, Getters)]
+pub struct AudioBuffer {
+    start_address: u64,
+    length_in_bytes: u32,
+}
+
+impl AudioBuffer {
+    pub fn new(start_address: u64, length_in_bytes: u32) -> Self {
+        Self {
+            start_address,
+            length_in_bytes,
+        }
+    }
+
+    pub fn read_sample_from_buffer(&self, index: u64) -> u32 {
+        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_32BIT_SAMPLE as u64));
+        // debug!("read_address: {:#x}", address);
+        unsafe { (address as *mut u32).read() }
+    }
+
+    pub fn write_sample_to_buffer(&self, sample: u32, index: u64) {
+        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_32BIT_SAMPLE as u64));
+        // debug!("write_address: {:#x}", address);
+        unsafe { (address as *mut u32).write(sample); }
+    }
+
+}
+
+#[derive(Debug, Getters)]
+pub struct CyclicBuffer {
+    length_in_bytes: u32,
+    audio_buffers: Vec<AudioBuffer>,
+
+}
+
+impl CyclicBuffer {
+    pub fn new(buffer_amount: u32, pages_per_buffer: u32) -> Self {
+        let buffer_frame_range = alloc_no_cache_dma_memory(buffer_amount * pages_per_buffer);
+        let buffer_size_in_bytes = (pages_per_buffer * PAGE_SIZE as u32) / 8;
+        let start_address = buffer_frame_range.start.start_address().as_u64();
+        let mut audio_buffers = Vec::new();
+        for index in 0..buffer_amount {
+            let buffer = AudioBuffer::new(start_address + (index * buffer_size_in_bytes) as u64, buffer_size_in_bytes);
+            audio_buffers.push(buffer);
+        }
+        Self {
+            length_in_bytes: buffer_amount * buffer_size_in_bytes / 8,
+            audio_buffers,
+        }
+    }
+
+    pub fn write_samples_to_buffer(&self, buffer_index: u32, samples: Vec<u32>) {
+        for sample_index in 0..samples.len() {
+            let sample = *samples.get(sample_index).unwrap();
+            let buffer = self.audio_buffers().get(buffer_index as usize).unwrap();
+            buffer.write_sample_to_buffer(sample, sample_index as u64)
+        }
+    }
+}
+
+
 
 #[derive(Clone, Debug)]
 pub enum BitDepth {
@@ -1266,99 +1334,10 @@ impl SampleContainer {
     }
 }
 
-#[derive(Debug, Getters)]
-pub struct AudioBuffer48kHz24BitStereo {
-    start_address: u64,
-    length_in_bytes: u32,
-    max_number_of_samples: u32,
-    last_valid_index_in_buffer: u32,
-}
-
-impl AudioBuffer48kHz24BitStereo {
-    pub fn new(phys_frame_range: PhysFrameRange) -> Self {
-        let start_address_inclusive = phys_frame_range.start.start_address().as_u64();
-        let end_address_exclusive = phys_frame_range.end.start_address().as_u64();
-        let max_number_of_samples = ((end_address_exclusive - start_address_inclusive) as u32) / CONTAINER_SIZE_FOR_24BIT_SAMPLE;
-        Self {
-            start_address: start_address_inclusive,
-            length_in_bytes: max_number_of_samples * 4,
-            max_number_of_samples,
-            last_valid_index_in_buffer: max_number_of_samples - 1,
-        }
-    }
-
-    pub fn read_sample_from_buffer(&self, index: u64) -> u32 {
-        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64));
-        debug!("read_address: {:#x}", address);
-        unsafe { (address as *mut u32).read() }
-    }
-
-    pub fn write_sample_to_buffer(&self, sample_container: SampleContainer, index: u64) {
-        let address = self.start_address + (index * (CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64));
-        debug!("write_address: {:#x}", address);
-        unsafe { (address as *mut u32).write(sample_container.as_unsigned()); }
-    }
-
-}
 
 
-
-#[derive(Debug, Getters)]
-pub struct CyclicBuffer {
-    total_frame_range: PhysFrameRange,
-    length_in_bytes: u32,
-    audio_buffers: Vec<AudioBuffer48kHz24BitStereo>,
-    cyclic_buffer_length_in_samples: u32,
-    last_valid_index: u8,
-    last_valid_address: *mut u32,
-    next_sample_pointer: *mut u32,
-
-}
-
-impl CyclicBuffer {
-    pub fn new(buffer_amount: usize, size_per_buffer_in_4kib_pages: usize) -> Self {
-        let mut cyclic_buffer_length_in_samples = 0;
-        let mut length_in_bytes = 0;
-        let mut audio_buffers = Vec::new();
-        let total_frame_range = alloc_no_cache_dma_memory(buffer_amount * size_per_buffer_in_4kib_pages);
-        let cyclic_buffer_base_address = total_frame_range.start.start_address();
-        let last_valid_address = (total_frame_range.end.start_address().as_u64() - CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64) as *mut u32;
-        for index in 0..buffer_amount {
-            let buffer_size = size_per_buffer_in_4kib_pages * PAGE_SIZE;
-            let start_frame = PhysFrame::from_start_address(cyclic_buffer_base_address + (index * buffer_size)).unwrap();
-            let end_frame = PhysFrame::from_start_address(cyclic_buffer_base_address + ((index + 1) * buffer_size)).unwrap();
-            let buffer_range = PhysFrameRange { start: start_frame, end: end_frame };
-            let buffer = AudioBuffer48kHz24BitStereo::new(buffer_range);
-            cyclic_buffer_length_in_samples += buffer.max_number_of_samples();
-            length_in_bytes += buffer.length_in_bytes();
-            audio_buffers.push(buffer);
-        }
-        let last_valid_index = (audio_buffers.len() - 1) as u8;
-        Self {
-            total_frame_range,
-            length_in_bytes,
-            audio_buffers,
-            cyclic_buffer_length_in_samples,
-            last_valid_index,
-            last_valid_address,
-            next_sample_pointer: cyclic_buffer_base_address.as_u64() as *mut u32,
-        }
-    }
-
-    pub fn push_samples(&mut self, samples: Vec<SampleContainer>) {
-        for sample in samples {
-            unsafe { self.next_sample_pointer.write(sample.as_unsigned()) }
-            self.next_sample_pointer = (self.next_sample_pointer as u64 + CONTAINER_SIZE_FOR_24BIT_SAMPLE as u64) as *mut u32;
-            if self.next_sample_pointer as u64 >= self.total_frame_range.end.start_address().as_u64() {
-                self.next_sample_pointer = self.total_frame_range.start.start_address().as_u64() as *mut u32;
-            }
-        }
-        // debug!("samples pushed until address (excluxive) {:#x}", self.next_sample_pointer as u64);
-    }
-}
-
-pub fn alloc_no_cache_dma_memory(frame_count: usize) -> PhysFrameRange {
-    let phys_frame_range = memory::physical::alloc(frame_count);
+pub fn alloc_no_cache_dma_memory(frame_count: u32) -> PhysFrameRange {
+    let phys_frame_range = memory::physical::alloc(frame_count as usize);
 
     let kernel_address_space = process_manager().read().kernel_process().unwrap().address_space();
     let start_page = Page::from_start_address(VirtAddr::new(phys_frame_range.start.start_address().as_u64())).unwrap();

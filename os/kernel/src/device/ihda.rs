@@ -1,22 +1,19 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
-use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{apic, interrupt_dispatcher, memory, pci_bus, process_manager};
-use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, StreamFormatResponse, ChannelStreamIdResponse, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload};
-use crate::device::ihda_node_communication::Command::{GetChannelStreamId, GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, GetStreamFormat, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl};
+use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
+use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload, BitsPerSample, StreamType};
+use crate::device::ihda_node_communication::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_node_communication::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry, AudioBuffer48kHz24BitStereo, SampleContainer, alloc_no_cache_dma_memory, CyclicBuffer};
-use crate::device::ihda_types::BitDepth::BitDepth24Bit;
+use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, RegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, BufferDescriptorListEntry, alloc_no_cache_dma_memory, CyclicBuffer};
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -308,8 +305,61 @@ impl IHDA {
     }
 
     fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &RegisterInterface) {
+        // ########## determine appropriate stream parameters ##########
+        let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Thirtytwo, 1, 1, 48000, StreamType::PCM);
+
+        // default stereo, 48kHz, 24 Bit stream format can be read from audio output converter widget (which gets declared further below)
+        // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap());
+
+
+
+        // ########## allocate data buffers and bdl ##########
+
+        let cyclic_buffer = CyclicBuffer::new(4, 2048);
+
+        let bdl = BufferDescriptorList::new(&cyclic_buffer);
+
+        let sd_registers = register_interface.output_stream_descriptors().get(0).unwrap();
+
+
+        // ########## construct bdl ##########
+
+        for index in 0..cyclic_buffer.audio_buffers().len() {
+            let buffer_address = *cyclic_buffer.audio_buffers().get(index).unwrap().start_address();
+            let buffer_length_in_bytes = *cyclic_buffer.audio_buffers().get(index).unwrap().length_in_bytes();
+            let bdl_entry = BufferDescriptorListEntry::new(buffer_address, buffer_length_in_bytes, false);
+            // debug!("buffer start address: {:#x}, last valid index: {}", buffer.start_address(), buffer.last_valid_index_in_buffer());
+            bdl.set_entry(index as u64, &bdl_entry);
+        }
+
+
+
+        // ########## allocate and configure stream descriptor ##########
+
+
+
+        sd_registers.reset_stream();
+
+        sd_registers.set_bdl_pointer_address(*bdl.base_address());
+
+        sd_registers.set_cyclic_buffer_lenght(*cyclic_buffer.length_in_bytes());
+
+        sd_registers.set_last_valid_index(*bdl.last_valid_index());
+
+        sd_registers.set_stream_format(stream_format.clone());
+        // sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
+
+        sd_registers.set_stream_id(4);
+
+        // sd_registers.set_interrupt_on_completion_enable_bit();
+        // sd_registers.set_fifo_error_interrupt_enable_bit();
+        // sd_registers.set_descriptor_error_interrupt_enable_bit();
+
+
+
+        // ########## configure codec ##########
+
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        debug!("pin widget: {:?}", pin_widget.address());
         register_interface.send_command(&SetAmplifierGainMute(pin_widget.address().clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
         // activate input and output for pin widget
@@ -327,13 +377,11 @@ impl IHDA {
             true,
             *pin_widget_control.h_phn_enable()
         )));
-        // debug!("pin widget control after: {:?}", PinWidgetControlInfo::try_from(register_interface.send_command(&pin_widget.address(), &GetPinWidgetControl)).unwrap());
 
         let connection_list_entries = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(pin_widget.address().clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
         let mixer_widget = NodeAddress::new(0, *connection_list_entries.connection_list_entry_at_offset_index());
 
         // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        debug!("mixer widget: {:?}", mixer_widget);
         register_interface.send_command(&SetAmplifierGainMute(mixer_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
 
@@ -343,105 +391,62 @@ impl IHDA {
         // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
         // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
         // default gain value is 87
-        debug!("audio out widget: {:?}", audio_out_widget);
-        register_interface.send_command(&SetAmplifierGainMute(audio_out_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 127)));
+        register_interface.send_command(&SetAmplifierGainMute(audio_out_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 30)));
 
-        // set stream id to 1
-        debug!("channel stream id before: {:?}", ChannelStreamIdResponse::try_from(register_interface.send_command(&GetChannelStreamId(audio_out_widget.clone()))).unwrap());
-        register_interface.send_command(&SetChannelStreamId(audio_out_widget.clone(), SetChannelStreamIdPayload::new(0, 1)));
-        debug!("channel stream id after: {:?}", ChannelStreamIdResponse::try_from(register_interface.send_command(&GetChannelStreamId(audio_out_widget.clone()))).unwrap());
-
-        // set stream descriptor
-        let sd_registers = register_interface.output_stream_descriptors().get(0).unwrap();
-
-        sd_registers.reset_stream();
-
-        sd_registers.set_stream_number(1);
-
-
-
-
-        let audio_buffer = AudioBuffer48kHz24BitStereo::new(alloc_no_cache_dma_memory(1));
-
-        debug!("audiobuffer_base_address: {:#x}", audio_buffer.start_address());
-        unsafe { debug!("audio_buffer first entry: {:#x}", (*audio_buffer.start_address() as *mut u32).read()) }
-        unsafe { debug!("audio_buffer second entry: {:#x}", ((*audio_buffer.start_address() + 32) as *mut u32).read()) }
-        debug!("sample0: {:#x}", audio_buffer.read_sample_from_buffer(0));
-        debug!("sample1: {:#x}", audio_buffer.read_sample_from_buffer(1));
-        audio_buffer.write_sample_to_buffer(SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit), 1);
-        debug!("sample0: {:#x}", audio_buffer.read_sample_from_buffer(0));
-        debug!("sample1: {:#x}", audio_buffer.read_sample_from_buffer(1));
-        unsafe { debug!("audio_buffer first entry: {:#x}", (*audio_buffer.start_address() as *mut u32).read()) }
-        unsafe { debug!("audio_buffer second entry: {:#x}", ((*audio_buffer.start_address() + 32) as *mut u32).read()) }
-        unsafe { debug!("audio_buffer first two entry: {:#x}", (*audio_buffer.start_address() as *mut u64).read()) }
-
-        let mut cyclic_buffer = CyclicBuffer::new(2, 2048);
-
-        let low = vec![SampleContainer::from(0b0, BitDepth24Bit); 32];
-        let high = vec![SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit); 32];
-
-        for _ in 0..(*cyclic_buffer.cyclic_buffer_length_in_samples() as usize) / (low.len() + high.len()) {
-            cyclic_buffer.push_samples(vec![SampleContainer::from(0b0, BitDepth24Bit); 32]);
-            cyclic_buffer.push_samples(vec![SampleContainer::from(0b1111_1111_1111_1111_1111_1111, BitDepth24Bit); 32]);
-        }
-
-        debug!("cyclic_buffer start address: {:#x}, end address: {:#x}, sample pointer: {:?}", cyclic_buffer.total_frame_range().start.start_address().as_u64(), cyclic_buffer.total_frame_range().end.start_address().as_u64(), cyclic_buffer.next_sample_pointer());
-
-
-        // setup MMIO space for buffer descriptor list
-        // hard coded 8*4096 for 256 entries with 128 bits each
-        let bdl_frame_range = alloc_no_cache_dma_memory(1);
-
-        debug!("bdl_base_address: {}", bdl_frame_range.start.start_address().as_u64());
-
-        sd_registers.set_bdl_pointer_address(bdl_frame_range.start);
-
-        let bdl = BufferDescriptorList::new(bdl_frame_range);
-
-        let mut count = 0;
-        for buffer in cyclic_buffer.audio_buffers() {
-            let bdl_entry = BufferDescriptorListEntry::new(*buffer.start_address(), *buffer.length_in_bytes(), true);
-            // debug!("buffer start address: {:#x}, last valid index: {}", buffer.start_address(), buffer.last_valid_index_in_buffer());
-            bdl.set_entry(count, &bdl_entry);
-            if count <= 255 {
-                count += 1;
-            }
-        }
-
-        debug!("buffer descriptor list: {:?}", bdl);
-
-        debug!("bdl entry 0: {:?}", bdl.get_entry(0));
-        debug!("bdl entry 1: {:?}", bdl.get_entry(1));
-        debug!("bdl entry 2: {:?}", bdl.get_entry(2));
-
-
-        // set cyclic buffer length
-        sd_registers.set_cyclic_buffer_lenght(*cyclic_buffer.length_in_bytes());
-        sd_registers.set_last_valid_index(*cyclic_buffer.last_valid_index());
+        // set stream id
+        register_interface.send_command(&SetChannelStreamId(audio_out_widget.clone(), SetChannelStreamIdPayload::new(0, 4)));
 
         // set stream format
-        let stream_format = StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap();
-        sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
+        register_interface.send_command(&SetStreamFormat(audio_out_widget.clone(), stream_format));
+
+
+
+        // ########## set up DMA position buffer (not necessary, only for debugging) ##########
 
         let dmapib_frame_range = alloc_no_cache_dma_memory(1);
 
         register_interface.set_dma_position_buffer_address(dmapib_frame_range.start);
         register_interface.enable_dma_position_buffer();
 
-        Timer::wait(2000);
 
-        for i in 0..1 {
-            debug!("dma_position_in_buffer of stream descriptor [{}]: {:#x}", i, register_interface.stream_descriptor_position_in_current_buffer(i));
-        }
-        debug!("dma_position_in_buffer of stream descriptor [0] before run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(0));
 
-        // debug!("run in one minute seconds!");
-        // Timer::wait(60000);
-        // run
+        // ########## start stream ##########
+
+        debug!("run in one second!");
+        Timer::wait(1000);
         sd_registers.set_stream_run_bit();
-        // immediately after this run command gets executed on my testing device, I can hear a Dirac impulse over the line out jack
-        // this is the expected sound if the two buffers defined above only get played once each: _-
-        // instead of looped indefinitely: _-_-_-_-_-_-_-...
+
+
+        // ########## debugging sandbox ##########
+
+        // debug!("first buffer address: {:#x}, length in bytes: {}", cyclic_buffer.audio_buffers().get(0).unwrap().start_address(), cyclic_buffer.audio_buffers().get(0).unwrap().length_in_bytes());
+        // debug!("second buffer address: {:#x}, length in bytes: {}", cyclic_buffer.audio_buffers().get(1).unwrap().start_address(), cyclic_buffer.audio_buffers().get(1).unwrap().length_in_bytes());
+        // debug!("cyclic buffer length in bytes: {}", cyclic_buffer.length_in_bytes());
+        // debug!("bdl address: {:#x}, last valid index: {}", bdl.base_address(), bdl.last_valid_index());
+        //
+        // unsafe {
+        //     let first_entry = (*bdl.base_address() as *mut u128).read();
+        //     let second_entry = ((*bdl.base_address() + 128) as *mut u128).read();
+        //     let third_entry = ((*bdl.base_address() + 256) as *mut u128).read();
+        //     debug!("bdl_pointer_address first_entry: {:#x}", first_entry);
+        //     debug!("bdl_pointer_address second_entry: {:#x}", second_entry);
+        //     debug!("bdl_pointer_address third_entry: {:#x}", third_entry);
+        //     debug!("first_entry: {:?}", BufferDescriptorListEntry::from(first_entry));
+        //     debug!("second_entry: {:?}", BufferDescriptorListEntry::from(second_entry));
+        // }
+
+
+        // debug!("bdl_pointer_address read from register: {:#x}", sd_registers.bdl_pointer_address());
+        // debug!("CORB address: {:#x}", register_interface.corb_address());
+        // debug!("RIRB address: {:#x}", register_interface.rirb_address());
+        // debug!("DMA position in buffer address: {:#x}", dmapib_frame_range.start.start_address().as_u64());
+
+        // for i in 0..5 {
+        //     debug!("dma_position_in_buffer of stream descriptor [{}]: {:#x}", i, register_interface.stream_descriptor_position_in_current_buffer(i));
+        // }
+        // debug!("dma_position_in_buffer of stream descriptor [1] before run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+
+
 
         debug!("----------------------------------------------------------------------------------");
         debug!("sdctl: {:#x}", sd_registers.sdctl().read());
@@ -455,7 +460,76 @@ impl IHDA {
         debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
 
 
-        debug!("dma_position_in_buffer of stream descriptor [0] after run: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(0));
+        // loop {
+        //     Timer::wait(2000);
+        //     for i in 0..3 {
+        //         debug!("dma_position_in_buffer of stream descriptor [{}]: {:#x}", i, register_interface.stream_descriptor_position_in_current_buffer(i));
+        //     }
+        // }
+
+        // debug!("stream id stream descriptor: {}", sd_registers.stream_id());
+        // debug!("stream id output converter widget: {}", ChannelStreamIdResponse::try_from(register_interface.send_command(&GetChannelStreamId(audio_out_widget.clone()))).unwrap().stream());
+        // debug!("channel count output converter widget: {}", ConverterChannelCountResponse::try_from(register_interface.send_command(&GetConverterChannelCount(audio_out_widget.clone()))).unwrap().converter_channel_count());
+
+        // Timer::wait(2000);
+        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+        // Timer::wait(2000);
+        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+        // Timer::wait(2000);
+        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+        // Timer::wait(2000);
+        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+
+
+        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 32) as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 32) as *mut u32).read()); }
+        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
+        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
+        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
+        //
+        // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
+        // // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
+        //
+        // register_interface.corbwp().write(register_interface.corbwp().read() + 1);
+        // Timer::wait(200);
+        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 32) as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 32) as *mut u32).read()); }
+        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
+        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
+        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
+        // Timer::wait(200);
+        //
+        //
+        // debug!("CORB address: {:#x}", register_interface.corb_address());
+        // debug!("RIRB address: {:#x}", register_interface.rirb_address());
+
+
+        // register_interface.outpay().dump();
+        // register_interface.inpay().dump();
+        // register_interface.outstrmpay().dump();
+        // register_interface.instrmpay().dump();
+        //
+        // debug!("channel count output converter widget: {:?}", VendorIdResponse::try_from(register_interface.send_command(&GetParameter(NodeAddress::new(0, 0), VendorId))));
+        //
+        // debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        // debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        // debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        // Timer::wait(2000);
+        // debug!("sdctl: {:#x}", sd_registers.sdctl().read());
+        // debug!("sdsts: {:#x}", sd_registers.sdsts().read());
+        // debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
+        // Timer::wait(2000);
+        //
+        // debug!("buffer descriptor list: {:?}", bdl);
+        //
+        // debug!("bdl entry 0: {:?}", bdl.get_entry(0));
+        // debug!("bdl entry 1: {:?}", bdl.get_entry(1));
+        // debug!("bdl entry 2: {:?}", bdl.get_entry(2));
+
 
         Timer::wait(600000);
     }
