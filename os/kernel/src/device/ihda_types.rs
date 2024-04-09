@@ -153,7 +153,7 @@ impl StreamDescriptorRegisters {
         self.sdctl.assert_bit(2)
     }
 
-    pub fn set_interrupt_on_completion_bit(&self) {
+    pub fn set_interrupt_on_completion_enable_bit(&self) {
         self.sdctl.set_bit(2);
     }
 
@@ -161,15 +161,15 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(2);
     }
 
-    pub fn assert_fifo_interrupt_enable_bit(&self) -> bool {
+    pub fn assert_fifo_error_interrupt_enable_bit(&self) -> bool {
         self.sdctl.assert_bit(3)
     }
 
-    pub fn set_fifo_interrupt_enable_bit(&self) {
+    pub fn set_fifo_error_interrupt_enable_bit(&self) {
         self.sdctl.set_bit(3);
     }
 
-    pub fn clear_fifo_interrupt_enable_bit(&self) {
+    pub fn clear_fifo_error_interrupt_enable_bit(&self) {
         self.sdctl.clear_bit(3);
     }
 
@@ -185,7 +185,7 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(4);
     }
 
-    // fn get_stripe_control();
+    // fn stripe_control();
     // fn set_stripe_control();
 
     pub fn assert_traffic_priority_enable_bit(&self) -> bool {
@@ -203,16 +203,16 @@ impl StreamDescriptorRegisters {
     // fn set_bidirectional_stream_as_input()
     // fn set_bidirectional_stream_as_output()
 
-    pub fn get_stream_number(&self) -> u8 {
+    pub fn stream_id(&self) -> u8 {
         match (self.sdctl.read() >> 20) & 0xF {
             0 => panic!("IHDA sound card reports an invalid stream number"),
             stream_number => stream_number as u8,
         }
     }
 
-    pub fn set_stream_number(&self, stream_number: u8) {
+    pub fn set_stream_id(&self, stream_id: u8) {
         // REMINDER: the highest byte of self.sdctl.read() is the sdsts register and should not be modified
-        self.sdctl.write((self.sdctl.read() & 0xFF0F_FFFF) | ((stream_number as u32) << 20));
+        self.sdctl.write((self.sdctl.read() & 0xFF0F_FFFF) | ((stream_id as u32) << 20));
     }
 
     // ########## SDSTS ##########
@@ -253,7 +253,7 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDCBL ##########
-    pub fn get_cyclic_buffer_lenght(&self) -> u32 {
+    pub fn cyclic_buffer_lenght(&self) -> u32 {
         self.sdcbl.read()
     }
 
@@ -265,7 +265,7 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDLVI ##########
-    pub fn get_last_valid_index(&self) -> u8 {
+    pub fn last_valid_index(&self) -> u8 {
         (self.sdlvi.read() & 0xFF) as u8
     }
 
@@ -630,7 +630,7 @@ impl RegisterInterface {
 
     // ########## CORBWP ##########
 
-    fn get_current_corb_write_pointer_offset(&self) -> u8 {
+    fn current_corb_write_pointer_offset(&self) -> u8 {
         (self.corbwp.read() & 0xFF) as u8
     }
 
@@ -640,7 +640,7 @@ impl RegisterInterface {
 
     // ########## CORBRP ##########
 
-    fn get_current_corb_read_pointer_offset(&self) -> u8 {
+    fn current_corb_read_pointer_offset(&self) -> u8 {
         (self.corbrp.read() & 0xFF) as u8
     }
 
