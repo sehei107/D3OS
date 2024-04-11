@@ -332,7 +332,8 @@ impl IHDA {
             bdl.set_entry(index as u64, &bdl_entry);
         }
 
-
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        unsafe { asm!("wbinvd"); }
 
         // ########## allocate and configure stream descriptor ##########
 
@@ -354,8 +355,6 @@ impl IHDA {
         // sd_registers.set_interrupt_on_completion_enable_bit();
         // sd_registers.set_fifo_error_interrupt_enable_bit();
         // sd_registers.set_descriptor_error_interrupt_enable_bit();
-
-
 
         // ########## configure codec ##########
 
@@ -408,8 +407,6 @@ impl IHDA {
         register_interface.set_dma_position_buffer_address(dmapib_frame_range.start);
         register_interface.enable_dma_position_buffer();
 
-
-
         // ########## start stream ##########
 
         debug!("run in one second!");
@@ -418,23 +415,6 @@ impl IHDA {
 
 
         // ########## debugging sandbox ##########
-
-        // debug!("first buffer address: {:#x}, length in bytes: {}", cyclic_buffer.audio_buffers().get(0).unwrap().start_address(), cyclic_buffer.audio_buffers().get(0).unwrap().length_in_bytes());
-        // debug!("second buffer address: {:#x}, length in bytes: {}", cyclic_buffer.audio_buffers().get(1).unwrap().start_address(), cyclic_buffer.audio_buffers().get(1).unwrap().length_in_bytes());
-        // debug!("cyclic buffer length in bytes: {}", cyclic_buffer.length_in_bytes());
-        // debug!("bdl address: {:#x}, last valid index: {}", bdl.base_address(), bdl.last_valid_index());
-        //
-        // unsafe {
-        //     let first_entry = (*bdl.base_address() as *mut u128).read();
-        //     let second_entry = ((*bdl.base_address() + 128) as *mut u128).read();
-        //     let third_entry = ((*bdl.base_address() + 256) as *mut u128).read();
-        //     debug!("bdl_pointer_address first_entry: {:#x}", first_entry);
-        //     debug!("bdl_pointer_address second_entry: {:#x}", second_entry);
-        //     debug!("bdl_pointer_address third_entry: {:#x}", third_entry);
-        //     debug!("first_entry: {:?}", BufferDescriptorListEntry::from(first_entry));
-        //     debug!("second_entry: {:?}", BufferDescriptorListEntry::from(second_entry));
-        // }
-
 
         // debug!("bdl_pointer_address read from register: {:#x}", sd_registers.bdl_pointer_address());
         // debug!("CORB address: {:#x}", register_interface.corb_address());
@@ -454,11 +434,11 @@ impl IHDA {
         debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
         debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
         debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
+        debug!("sdfifow: {:#x}", sd_registers.sdfifow().read());
         debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
         debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
         debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
         debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
-
 
         // loop {
         //     Timer::wait(2000);
