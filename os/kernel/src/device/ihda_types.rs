@@ -335,7 +335,7 @@ pub enum FIFOWatermark {
 
 // representation of all IHDA registers
 #[derive(Getters)]
-pub struct RegisterInterface {
+pub struct ControllerRegisterInterface {
     gcap: Register<u16>,
     vmin: Register<u8>,
     vmaj: Register<u8>,
@@ -384,7 +384,7 @@ pub struct RegisterInterface {
     // sdlpiba_aliases: Vec<Register<u32>>,
 }
 
-impl RegisterInterface {
+impl ControllerRegisterInterface {
     pub fn new(mmio_base_address: u64) -> Self {
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
