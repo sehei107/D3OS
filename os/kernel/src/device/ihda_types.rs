@@ -1274,7 +1274,6 @@ impl AudioBuffer {
 pub struct CyclicBuffer {
     length_in_bytes: u32,
     audio_buffers: Vec<AudioBuffer>,
-
 }
 
 impl CyclicBuffer {
@@ -1288,7 +1287,7 @@ impl CyclicBuffer {
             audio_buffers.push(buffer);
         }
         Self {
-            length_in_bytes: buffer_amount * buffer_size_in_bytes / 8,
+            length_in_bytes: buffer_amount * buffer_size_in_bytes,
             audio_buffers,
         }
     }
