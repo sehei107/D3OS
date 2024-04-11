@@ -198,8 +198,6 @@ impl GetAmplifierGainMutePayload {
             GetAmplifierGainMuteSide::Left => 1,
         };
 
-        debug!("get_amplifier: {:#x}", amp_type << 15 | side << 13 | self.index as u16);
-
         amp_type << 15 | side << 13 | self.index as u16
     }
 }
@@ -237,8 +235,6 @@ impl SetAmplifierGainMutePayload {
             SetAmplifierGainMuteSide::Left => 0b10,
             SetAmplifierGainMuteSide::Both => 0b11,
         };
-
-        debug!("set_amplifier: {:#x}", amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16);
 
         amp_type << 14 | side << 12 | (self.index as u16) << 8 | (self.mute as u16) << 7 | self.gain as u16
     }
