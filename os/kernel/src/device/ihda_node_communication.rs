@@ -2,7 +2,6 @@ use core::fmt::LowerHex;
 use core::ops::BitAnd;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
-use log::debug;
 use crate::device::ihda_types::NodeAddress;
 
 const MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET: u8 = 16;
