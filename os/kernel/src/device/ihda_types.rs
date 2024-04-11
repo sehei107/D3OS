@@ -91,6 +91,9 @@ pub struct StreamDescriptorRegisters {
     sdlpib: Register<u32>,
     sdcbl: Register<u32>,
     sdlvi: Register<u16>,
+    // The register SDFIFOW is only defined in 8-series-chipset-pch-datasheet.pdf for the chipset on the used testing device.
+    // As the IHDA specification doesn't mention this register at all, it might not exist for other IHDA sound cards.
+    sdfifow: Register<u16>,
     sdfifod: Register<u16>,
     sdfmt: Register<u16>,
     sdbdpl: Register<u32>,
@@ -105,6 +108,7 @@ impl StreamDescriptorRegisters {
             sdlpib: Register::new((sd_base_address + 0x4) as *mut u32, "SDLPIB"),
             sdcbl: Register::new((sd_base_address + 0x8) as *mut u32, "SDCBL"),
             sdlvi: Register::new((sd_base_address + 0xC) as *mut u16, "SDLVI"),
+            sdfifow: Register::new((sd_base_address + 0xE) as *mut u16, "SDFIFOW"),
             // bytes with offset 0x8E to 0x8F are reserved
             sdfifod: Register::new((sd_base_address + 0x10) as *mut u16, "SDFIFOD"),
             sdfmt: Register::new((sd_base_address + 0x12) as *mut u16, "SDFMT"),
@@ -276,7 +280,23 @@ impl StreamDescriptorRegisters {
         self.sdlvi.write(length as u16);
     }
 
-    // ########## SDFIFO ##########
+    // ########## SDFIFOW ##########
+    pub fn fifo_watermark(&self) -> FIFOWatermark {
+        match (self.sdfifow.read() & 0b111) as u8 {
+            0b100 => FIFOWatermark::Bit32,
+            0b101 => FIFOWatermark::Bit64,
+            _ => panic!("Unsupported FIFO Watermark for stream reported by sound card")
+        }
+    }
+
+    pub fn set_fifo_watermark(&self, watermark: FIFOWatermark) {
+        match watermark {
+            FIFOWatermark::Bit32 => self.sdfifow.write(0b100),
+            FIFOWatermark::Bit64 => self.sdfifow.write(0b101),
+        }
+    }
+
+    // ########## SDFIFOD ##########
     pub fn fifo_size(&self) -> u16 {
         self.sdfifod.read()
     }
@@ -306,6 +326,13 @@ impl StreamDescriptorRegisters {
     }
 }
 
+
+#[derive(Clone, Debug)]
+pub enum FIFOWatermark {
+    Bit32,
+    Bit64,
+}
+
 // representation of all IHDA registers
 #[derive(Getters)]
 pub struct RegisterInterface {
@@ -318,6 +345,9 @@ pub struct RegisterInterface {
     wakeen: Register<u16>,
     wakests: Register<u16>,
     gsts: Register<u16>,
+    // The register GCAP2 is only defined in 8-series-chipset-pch-datasheet.pdf for the chipset on the used testing device.
+    // As the IHDA specification doesn't mention this register at all, it might not exist for other IHDA sound cards.
+    gcap2: Register<u16>,
     outstrmpay: Register<u16>,
     instrmpay: Register<u16>,
     intctl: Register<u32>,
@@ -400,7 +430,9 @@ impl RegisterInterface {
             wakeen: Register::new((mmio_base_address + 0xC) as *mut u16, "WAKEEN"),
             wakests: Register::new((mmio_base_address + 0xE) as *mut u16, "WAKESTS"),
             gsts: Register::new((mmio_base_address + 0x10) as *mut u16, "GSTS"),
-            // bytes with offset 0x12 to 0x17 are reserved
+            // gcap2 only specified in phc-spec, not in IHDA-spec
+            gcap2: Register::new((mmio_base_address + 0x12) as *mut u16, "GCAP2"),
+            // bytes with offset 0x14 to 0x17 are reserved
             outstrmpay: Register::new((mmio_base_address + 0x18) as *mut u16, "OUTSTRMPAY"),
             instrmpay: Register::new((mmio_base_address + 0x1A) as *mut u16, "INSTRMPAY"),
             // bytes with offset 0x1C to 0x1F are reserved
@@ -558,6 +590,11 @@ impl RegisterInterface {
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
     pub fn clear_flush_status_bit(&self) {
         self.gctl.set_bit(1);
+    }
+
+    // ########## GCAP2 ##########
+    pub fn energy_efficient_audio_capability(&self) -> bool {
+        self.gsts.assert_bit(0)
     }
 
     // ########## OUTSTRMPAY ##########
