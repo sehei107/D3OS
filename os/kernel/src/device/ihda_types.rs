@@ -665,6 +665,10 @@ impl RegisterInterface {
         self.corbubase.write(ubase);
     }
 
+    pub fn corb_address(&self) -> u64 {
+        (self.corbubase.read() as u64) << 32 | (self.corblbase.read() >> 1 << 1) as u64
+    }
+
     // ########## CORBWP ##########
 
     fn current_corb_write_pointer_offset(&self) -> u8 {
@@ -886,6 +890,20 @@ impl RegisterInterface {
         // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
     }
 
+    pub fn set_rirb_address(&self, start_frame: PhysFrame) {
+        // _TODO_: assert that the DMA engine is not running before writing to CORBLASE and CORBUBASE (see specification, section 3.3.18 and 3.3.19)
+        let start_address = start_frame.start_address().as_u64();
+        let lbase = (start_address & 0xFFFFFFFF) as u32;
+        let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
+
+        self.rirblbase.write(lbase);
+        self.rirbubase.write(ubase);
+    }
+
+    pub fn rirb_address(&self) -> u64 {
+        (self.rirbubase.read() as u64) << 32 | (self.rirblbase.read() >> 1 << 1) as u64
+    }
+
     pub fn init_rirb(&self) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
         self.rirbctl().clear_all_bits();
@@ -894,11 +912,7 @@ impl RegisterInterface {
         let rirb_frame_range = memory::physical::alloc(1);
         match rirb_frame_range {
             PhysFrameRange { start, end: _ } => {
-                let start_address = start.start_address().as_u64();
-                let lbase = (start_address & 0xFFFFFFFF) as u32;
-                let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
-                self.rirblbase().write(lbase);
-                self.rirbubase().write(ubase);
+                self.set_rirb_address(start);
             }
         }
 
