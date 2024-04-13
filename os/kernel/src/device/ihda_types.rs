@@ -1217,7 +1217,7 @@ impl BufferDescriptorList {
         let mut entries = Vec::new();
         for buffer in cyclic_buffer.audio_buffers().iter() {
             // interrupt on completion temporarily hard coded to false for all buffers
-            entries.push(BufferDescriptorListEntry::new(*buffer.start_address(), *buffer.length_in_bytes(), false))
+            entries.push(BufferDescriptorListEntry::new(*buffer.start_address(), *buffer.length_in_bytes(), true))
         }
 
         Self {
@@ -1279,11 +1279,13 @@ pub struct CyclicBuffer {
 impl CyclicBuffer {
     pub fn new(buffer_amount: u32, pages_per_buffer: u32) -> Self {
         let buffer_frame_range = alloc_no_cache_dma_memory(buffer_amount * pages_per_buffer);
-        let buffer_size_in_bytes = (pages_per_buffer * PAGE_SIZE as u32) / 8;
+        debug!("cyclic buffer start inclusive: {:#x}, cyclic buffer end exclusive: {:#x}", buffer_frame_range.start.start_address().as_u64(), buffer_frame_range.end.start_address().as_u64());
+        let buffer_size_in_bits = pages_per_buffer * PAGE_SIZE as u32;
+        let buffer_size_in_bytes = buffer_size_in_bits / 8;
         let start_address = buffer_frame_range.start.start_address().as_u64();
         let mut audio_buffers = Vec::new();
         for index in 0..buffer_amount {
-            let buffer = AudioBuffer::new(start_address + (index * buffer_size_in_bytes) as u64, buffer_size_in_bytes);
+            let buffer = AudioBuffer::new(start_address + (index * buffer_size_in_bits) as u64, buffer_size_in_bytes);
             audio_buffers.push(buffer);
         }
         Self {

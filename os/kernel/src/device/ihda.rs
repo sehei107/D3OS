@@ -344,7 +344,7 @@ impl IHDA {
 
     fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &ControllerRegisterInterface) {
         // ########## determine appropriate stream parameters ##########
-        let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Thirtytwo, 1, 1, 48000, StreamType::PCM);
+        let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
 
         // default stereo, 48kHz, 24 Bit stream format can be read from audio output converter widget (which gets declared further below)
         // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap());
@@ -353,7 +353,7 @@ impl IHDA {
 
         // ########## allocate data buffers and bdl ##########
 
-        let cyclic_buffer = CyclicBuffer::new(4, 2048);
+        let cyclic_buffer = CyclicBuffer::new(2, 2048);
 
         let bdl = BufferDescriptorList::new(&cyclic_buffer);
 
@@ -362,12 +362,25 @@ impl IHDA {
 
         // ########## construct bdl ##########
 
-        for index in 0..cyclic_buffer.audio_buffers().len() {
-            let buffer_address = *cyclic_buffer.audio_buffers().get(index).unwrap().start_address();
-            let buffer_length_in_bytes = *cyclic_buffer.audio_buffers().get(index).unwrap().length_in_bytes();
-            let bdl_entry = BufferDescriptorListEntry::new(buffer_address, buffer_length_in_bytes, false);
-            // debug!("buffer start address: {:#x}, last valid index: {}", buffer.start_address(), buffer.last_valid_index_in_buffer());
-            bdl.set_entry(index as u64, &bdl_entry);
+        for index in 0..=*bdl.last_valid_index() {
+            bdl.set_entry(index as u64, bdl.entries().get(index as usize).unwrap());
+        }
+
+        let range = *cyclic_buffer.length_in_bytes() / 2;
+
+        for index in 0..range {
+            unsafe {
+                let address = *cyclic_buffer.audio_buffers().get(0).unwrap().start_address() + (index as u64 * 16);
+                if (index < 5) | (index == (range  - 1)) {
+                    let value = (address as *mut u16).read();
+                    debug!("address: {:#x}, value: {:#x}", address, value)
+                }
+                (address as *mut u16).write((index as u16 % 32) * 2000);
+                if (index < 5) | (index == (range - 1)) {
+                    let value = (address as *mut u16).read();
+                    debug!("address: {:#x}, value: {:#x}", address, value)
+                }
+            }
         }
 
         // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
@@ -466,17 +479,40 @@ impl IHDA {
 
 
 
-        debug!("----------------------------------------------------------------------------------");
-        debug!("sdctl: {:#x}", sd_registers.sdctl().read());
-        debug!("sdsts: {:#x}", sd_registers.sdsts().read());
-        debug!("sdlpib: {:#x}", sd_registers.sdlpib().read());
-        debug!("sdcbl: {:#x}", sd_registers.sdcbl().read());
-        debug!("sdlvi: {:#x}", sd_registers.sdlvi().read());
-        debug!("sdfifow: {:#x}", sd_registers.sdfifow().read());
-        debug!("sdfifod: {:#x}", sd_registers.sdfifod().read());
-        debug!("sdfmt: {:#x}", sd_registers.sdfmt().read());
-        debug!("sdbdpl: {:#x}", sd_registers.sdbdpl().read());
-        debug!("sdbdpu: {:#x}", sd_registers.sdbdpu().read());
+        // debug!("----------------------------------------------------------------------------------");
+        // sd_registers.sdctl().dump();
+        // sd_registers.sdsts().dump();
+        // sd_registers.sdlpib().dump();
+        // sd_registers.sdcbl().dump();
+        // sd_registers.sdlvi().dump();
+        // sd_registers.sdfifow().dump();
+        // sd_registers.sdfifod().dump();
+        // sd_registers.sdfmt().dump();
+        // sd_registers.sdbdpl().dump();
+        // sd_registers.sdbdpu().dump();
+        // debug!("----------------------------------------------------------------------------------");
+        // let bdl_base_address = 0x21a2000;
+        // for i in 0..8 {
+        //     unsafe {
+        //         let address = bdl_base_address + (i * 32);
+        //         debug!("address: {:#x}, value read as u32: {:#x}", address, (address as *mut u32).read());
+        //         }
+        // }
+        // debug!("----------------------------------------------------------------------------------");
+        // for i in 0..4 {
+        //     unsafe {
+        //         let address = bdl_base_address + (i * 64);
+        //         debug!("address: {:#x}, value read as u64: {:#x}", address, (address as *mut u64).read());
+        //     }
+        // }
+        // debug!("----------------------------------------------------------------------------------");
+        // for i in 0..2 {
+        //     unsafe {
+        //         let address = bdl_base_address + (i * 128);
+        //         debug!("address: {:#x}, value read as u128: {:#x}", address, (address as *mut u128).read());
+        //     }
+        // }
+
 
         // loop {
         //     Timer::wait(2000);
