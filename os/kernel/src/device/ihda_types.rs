@@ -2,9 +2,11 @@
 
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
+use core::ptr::NonNull;
 use log::debug;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
+use volatile::{VolatilePtr};
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame};
 use x86_64::structures::paging::page::PageRange;
@@ -24,7 +26,7 @@ const MAX_AMOUNT_OF_CHANNELS_PER_STREAM: u8 = 16;
 // TIMEOUT values arbitrarily chosen
 const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
-const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS: u64 = 128;
+const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES: u64 = 16;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u64 = 256;
 const DMA_POSITION_IN_BUFFER_ENTRY_SIZE: u64 = 32;
 const CONTAINER_SIZE_FOR_24BIT_SAMPLE: u32 = 32;
@@ -1228,16 +1230,18 @@ impl BufferDescriptorList {
     }
 
     pub fn get_entry(&self, index: u64) -> BufferDescriptorListEntry {
-        let address = (self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS)) as *mut u128;
-        // debug!("bdl entry [{}] address: {:#x}", index, address);
-        let raw_data = unsafe { address.read() };
-        BufferDescriptorListEntry::from(raw_data)
+        unsafe {
+            let address = VolatilePtr::new(NonNull::new((self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES)) as *mut u128).unwrap());
+            let raw_data = address.read();
+            BufferDescriptorListEntry::from(raw_data)
+        }
     }
 
     pub fn set_entry(&self, index: u64, entry: &BufferDescriptorListEntry) {
-        let address = (self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BITS)) as *mut u128;
-        unsafe { address.write(entry.as_u128()) };
-
+        unsafe {
+            let address = VolatilePtr::new(NonNull::new((self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES)) as *mut u128).unwrap());
+            address.write(entry.as_u128())
+        };
     }
 }
 
