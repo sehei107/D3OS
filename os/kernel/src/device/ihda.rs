@@ -162,7 +162,7 @@ impl IHDA {
         let interrupt_vector = InterruptVector::try_from(X86_CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
         interrupt_dispatcher().assign(interrupt_vector, Box::new(IHDAInterruptHandler::default()));
         apic().allow(interrupt_vector);
-        info!("Connected driver to interrupt line {} (plus CPU_EXCEPTION_OFFSET of 32)", interrupt_line);
+        info!("Connected driver to interrupt line {} (plus X86_CPU_EXCEPTION_OFFSET of 32)", interrupt_line);
         /*
         The sound card on the testing device uses interrupt line 3, so that CPU_EXCEPTION_OFFSET + interrupt_line = 35.
         A fake interrupt via the call of "unsafe { asm!("int 35"); }" will now result in a call of IHDAInterruptHandler's trigger() function.

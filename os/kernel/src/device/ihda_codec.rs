@@ -16,7 +16,7 @@ const MAX_AMPLIFIER_GAIN: u8 = u8::MAX;
 
 // ############################################## IHDA commands ##############################################
 
-#[derive(Clone, Debug, Getters)]
+#[derive(Clone, Copy, Debug, Getters)]
 pub struct NodeAddress {
     codec_address: u8,
     node_id: u8,
@@ -82,12 +82,12 @@ impl Codec {
         // ########## configure codec ##########
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        register_interface.send_command(&SetAmplifierGainMute(pin_widget.address().clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
+        register_interface.send_command(&SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
         // activate input and output for pin widget
-        let pin_widget_control = PinWidgetControlResponse::try_from(register_interface.send_command(&GetPinWidgetControl(pin_widget.address().clone()))).unwrap();
+        let pin_widget_control = PinWidgetControlResponse::try_from(register_interface.send_command(&GetPinWidgetControl(*pin_widget.address()))).unwrap();
         /* after the following command, plugging headphones in and out the jack should make an audible noise */
-        register_interface.send_command(&SetPinWidgetControl(pin_widget.address().clone(), SetPinWidgetControlPayload::new(
+        register_interface.send_command(&SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::new(
             match pin_widget_control.voltage_reference_enable() {
                 VoltageReferenceSignalLevel::HiZ => VoltageReferenceSignalLevel::HiZ,
                 VoltageReferenceSignalLevel::FiftyPercent => VoltageReferenceSignalLevel::FiftyPercent,
@@ -100,7 +100,7 @@ impl Codec {
             *pin_widget_control.h_phn_enable()
         )));
 
-        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(pin_widget.address().clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
+        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
         // debug!("connection list entries pin widget: {:?}", connection_list_entries_pin);
 
 
@@ -112,21 +112,21 @@ impl Codec {
 
 
         // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        register_interface.send_command(&SetAmplifierGainMute(mixer_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
+        register_interface.send_command(&SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
 
-        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(mixer_widget.clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
+        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
         let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer1.connection_list_entry_at_offset_index());
 
         // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
         // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
         // default gain value is 87
-        register_interface.send_command(&SetAmplifierGainMute(audio_out_widget.clone(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
+        register_interface.send_command(&SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
 
         // set stream id
-        register_interface.send_command(&SetChannelStreamId(audio_out_widget.clone(), SetChannelStreamIdPayload::new(channel, stream_id)));
+        register_interface.send_command(&SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
 
         // set stream format
-        register_interface.send_command(&SetStreamFormat(audio_out_widget.clone(), stream_format.clone()));
+        register_interface.send_command(&SetStreamFormat(audio_out_widget, stream_format.clone()));
     }
 }
 
@@ -139,7 +139,6 @@ pub struct RootNode {
     address: NodeAddress,
     vendor_id: VendorIdResponse,
     revision_id: RevisionIdResponse,
-    subordinate_node_count: SubordinateNodeCountResponse,
     function_group_nodes: Vec<FunctionGroupNode>,
 }
 
@@ -154,14 +153,12 @@ impl RootNode {
         codec_address: u8,
         vendor_id: VendorIdResponse,
         revision_id: RevisionIdResponse,
-        subordinate_node_count: SubordinateNodeCountResponse,
         function_group_nodes: Vec<FunctionGroupNode>
     ) -> Self {
         RootNode {
             address: NodeAddress::new(codec_address, 0),
             vendor_id,
             revision_id,
-            subordinate_node_count,
             function_group_nodes,
         }
     }
@@ -170,7 +167,6 @@ impl RootNode {
 #[derive(Debug, Getters)]
 pub struct FunctionGroupNode {
     address: NodeAddress,
-    subordinate_node_count: SubordinateNodeCountResponse,
     function_group_type: FunctionGroupTypeResponse,
     audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
     sample_size_rate_caps: SampleSizeRateCAPsResponse,
@@ -192,7 +188,6 @@ impl Node for FunctionGroupNode {
 impl FunctionGroupNode {
     pub fn new(
         address: NodeAddress,
-        subordinate_node_count: SubordinateNodeCountResponse,
         function_group_type: FunctionGroupTypeResponse,
         audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
         sample_size_rate_caps: SampleSizeRateCAPsResponse,
@@ -205,7 +200,6 @@ impl FunctionGroupNode {
     ) -> Self {
         FunctionGroupNode {
             address,
-            subordinate_node_count,
             function_group_type,
             audio_function_group_caps,
             sample_size_rate_caps,
