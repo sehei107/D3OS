@@ -9,5 +9,5 @@ pub mod lfb_terminal;
 pub mod serial;
 pub mod pci;
 pub mod ihda;
-pub mod ihda_types;
-pub mod ihda_node_communication;
+pub mod ihda_controller;
+pub mod ihda_codec;

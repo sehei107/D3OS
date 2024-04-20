@@ -11,10 +11,11 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
-use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload, BitsPerSample, StreamType};
-use crate::device::ihda_node_communication::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
-use crate::device::ihda_node_communication::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_types::{Codec, FunctionGroupNode, NodeAddress, ControllerRegisterInterface, RootNode, WidgetInfoContainer, WidgetNode, BufferDescriptorList, alloc_no_cache_dma_memory, CyclicBuffer, StreamDescriptorRegisters};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload, BitsPerSample, StreamType};
+use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
+use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
+use crate::device::ihda_controller::{ControllerRegisterInterface, BufferDescriptorList, alloc_no_cache_dma_memory, CyclicBuffer, StreamDescriptorRegisters};
+use crate::device::ihda_codec::{Codec, FunctionGroupNode, NodeAddress, RootNode, WidgetInfoContainer, WidgetNode};
 use crate::device::pci::PciBus;
 use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
@@ -506,32 +507,33 @@ impl IHDA {
         // Timer::wait(2000);
         // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
 
+        register_interface.rirbwp().set_bit(15);
+        Timer::wait(1000);
+        unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 4) as *mut u32).read()); }
+        debug!("CORBWP: {:#x}", register_interface.corbwp().read());
+        debug!("CORBRP: {:#x}", register_interface.corbrp().read());
+        debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
 
-        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 32) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 32) as *mut u32).read()); }
-        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
-        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
-        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
-        //
-        // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
-        // // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
-        //
-        // register_interface.corbwp().write(register_interface.corbwp().read() + 1);
-        // Timer::wait(200);
-        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 32) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 32) as *mut u32).read()); }
-        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
-        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
-        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
-        // Timer::wait(200);
-        //
-        //
-        // debug!("CORB address: {:#x}", register_interface.corb_address());
-        // debug!("RIRB address: {:#x}", register_interface.rirb_address());
+        unsafe { ((register_interface.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
+        // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
+
+        register_interface.corbwp().write(register_interface.corbwp().read() + 1);
+        Timer::wait(200);
+        unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 4) as *mut u32).read()); }
+        debug!("CORBWP: {:#x}", register_interface.corbwp().read());
+        debug!("CORBRP: {:#x}", register_interface.corbrp().read());
+        debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
+        Timer::wait(200);
+
+
+        debug!("CORB address: {:#x}", register_interface.corb_address());
+        debug!("RIRB address: {:#x}", register_interface.rirb_address());
 
 
 

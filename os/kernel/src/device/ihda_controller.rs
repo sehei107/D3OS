@@ -11,15 +11,14 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame};
 use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
-use crate::device::ihda_node_communication::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, Response, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, RawResponse, Command, StreamFormatResponse, SetStreamFormatPayload};
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_types::Sample::{Sample16Bit, Sample20Bit, Sample24Bit, Sample32Bit, Sample8Bit};
+use crate::device::ihda_codec::{Command, RawResponse, Response, SetStreamFormatPayload, StreamFormatResponse};
+use crate::device::ihda_controller::Sample::{Sample16Bit, Sample20Bit, Sample24Bit, Sample32Bit, Sample8Bit};
 use crate::memory::PAGE_SIZE;
 
 const SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES: u64 = 0x20;
 const OFFSET_OF_FIRST_SOUND_DESCRIPTOR: u64 = 0x80;
-const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const MAX_AMOUNT_OF_BIDRECTIONAL_STREAMS: u8 = 30;
 const MAX_AMOUNT_OF_SDIN_SIGNALS: u8 = 15;
 const MAX_AMOUNT_OF_CHANNELS_PER_STREAM: u8 = 16;
@@ -920,6 +919,8 @@ impl ControllerRegisterInterface {
 
         // reset RIRBWP
         self.rirbwp().set_bit(15);
+        self.rirbwp.dump();
+        Timer::wait(2000);
     }
 
     pub fn start_corb(&self) {
@@ -973,191 +974,6 @@ impl CorbSizeCapability {
             support_two_hundred_fifty_six_entries,
         }
     }
-}
-
-
-#[derive(Clone, Debug, Getters)]
-pub struct NodeAddress {
-    codec_address: u8,
-    node_id: u8,
-}
-
-impl NodeAddress {
-    pub fn new(codec_address: u8, node_id: u8) -> Self {
-        if codec_address >= MAX_AMOUNT_OF_CODECS { panic!("IHDA only supports up to {} codecs!", MAX_AMOUNT_OF_CODECS) };
-        NodeAddress {
-            codec_address,
-            node_id,
-        }
-    }
-}
-
-#[derive(Debug, Getters)]
-pub struct Codec {
-    codec_address: u8,
-    root_node: RootNode,
-}
-
-impl Codec {
-    pub fn new(codec_address: u8, root_node: RootNode) -> Self {
-        Codec {
-            codec_address,
-            root_node,
-        }
-    }
-}
-
-pub trait Node {
-    fn address(&self) -> &NodeAddress;
-}
-
-#[derive(Debug, Getters)]
-pub struct RootNode {
-    address: NodeAddress,
-    vendor_id: VendorIdResponse,
-    revision_id: RevisionIdResponse,
-    subordinate_node_count: SubordinateNodeCountResponse,
-    function_group_nodes: Vec<FunctionGroupNode>,
-}
-
-impl Node for RootNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl RootNode {
-    pub fn new(
-        codec_address: u8,
-        vendor_id: VendorIdResponse,
-        revision_id: RevisionIdResponse,
-        subordinate_node_count: SubordinateNodeCountResponse,
-        function_group_nodes: Vec<FunctionGroupNode>
-    ) -> Self {
-        RootNode {
-            address: NodeAddress::new(codec_address, 0),
-            vendor_id,
-            revision_id,
-            subordinate_node_count,
-            function_group_nodes,
-        }
-    }
-}
-
-#[derive(Debug, Getters)]
-pub struct FunctionGroupNode {
-    address: NodeAddress,
-    subordinate_node_count: SubordinateNodeCountResponse,
-    function_group_type: FunctionGroupTypeResponse,
-    audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
-    sample_size_rate_caps: SampleSizeRateCAPsResponse,
-    supported_stream_formats: SupportedStreamFormatsResponse,
-    input_amp_caps: AmpCapabilitiesResponse,
-    output_amp_caps: AmpCapabilitiesResponse,
-    // function group node must provide a SupportedPowerStatesInfo, but QEMU doesn't do it... so this only an Option<SupportedPowerStatesInfo> for now
-    supported_power_states: SupportedPowerStatesResponse,
-    gpio_count: GPIOCountResponse,
-    widgets: Vec<WidgetNode>,
-}
-
-impl Node for FunctionGroupNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl FunctionGroupNode {
-    pub fn new(
-        address: NodeAddress,
-        subordinate_node_count: SubordinateNodeCountResponse,
-        function_group_type: FunctionGroupTypeResponse,
-        audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
-        sample_size_rate_caps: SampleSizeRateCAPsResponse,
-        supported_stream_formats: SupportedStreamFormatsResponse,
-        input_amp_caps: AmpCapabilitiesResponse,
-        output_amp_caps: AmpCapabilitiesResponse,
-        supported_power_states: SupportedPowerStatesResponse,
-        gpio_count: GPIOCountResponse,
-        widgets: Vec<WidgetNode>
-    ) -> Self {
-        FunctionGroupNode {
-            address,
-            subordinate_node_count,
-            function_group_type,
-            audio_function_group_caps,
-            sample_size_rate_caps,
-            supported_stream_formats,
-            input_amp_caps,
-            output_amp_caps,
-            supported_power_states,
-            gpio_count,
-            widgets
-        }
-    }
-}
-
-#[derive(Debug, Getters)]
-pub struct WidgetNode {
-    address: NodeAddress,
-    audio_widget_capabilities: AudioWidgetCapabilitiesResponse,
-    widget_info: WidgetInfoContainer,
-}
-
-impl Node for WidgetNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl WidgetNode {
-    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesResponse, widget_info: WidgetInfoContainer) -> Self {
-        WidgetNode {
-            address,
-            audio_widget_capabilities,
-            widget_info
-        }
-    }
-
-    pub fn max_number_of_channels(&self) -> u8 {
-        // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
-        (self.audio_widget_capabilities.chan_count_ext() << 1) + (*self.audio_widget_capabilities.chan_count_lsb() as u8) + 1
-    }
-}
-
-#[derive(Debug)]
-pub enum WidgetInfoContainer {
-    AudioOutputConverter(
-        SampleSizeRateCAPsResponse,
-        SupportedStreamFormatsResponse,
-        AmpCapabilitiesResponse,
-        SupportedPowerStatesResponse,
-        ProcessingCapabilitiesResponse,
-    ),
-    AudioInputConverter(
-        SampleSizeRateCAPsResponse,
-        SupportedStreamFormatsResponse,
-        AmpCapabilitiesResponse,
-        ConnectionListLengthResponse,
-        SupportedPowerStatesResponse,
-        ProcessingCapabilitiesResponse,
-    ),
-    // first AmpCapabilitiesInfo is input amp caps and second AmpCapabilitiesInfo is output amp caps
-    PinComplex(
-        PinCapabilitiesResponse,
-        AmpCapabilitiesResponse,
-        AmpCapabilitiesResponse,
-        ConnectionListLengthResponse,
-        SupportedPowerStatesResponse,
-        ProcessingCapabilitiesResponse,
-        ConfigurationDefaultResponse,
-        ConnectionListEntryResponse,
-    ),
-    Mixer,
-    Selector,
-    Power,
-    VolumeKnob,
-    BeepGenerator,
-    VendorDefined,
 }
 
 #[derive(Debug, Getters)]
