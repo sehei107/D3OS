@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::arch::asm;
 use core::ops::BitOr;
 use log::{debug, info};
@@ -18,8 +19,6 @@ use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
-
-const MAX_AMOUNT_OF_CODECS: u8 = 15;
 
 pub struct IHDA;
 
@@ -63,7 +62,7 @@ impl IHDA {
         info!("CORB and RIRB set up and running");
 
         // interview sound card
-        let codecs = Codec::scan_for_available_codecs(&register_interface);
+        let codecs = register_interface.scan_for_available_codecs();
 
         IHDA::prepare_default_stereo_output(&register_interface, &codecs.get(0).unwrap());
 
@@ -187,7 +186,7 @@ impl IHDA {
         // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap());
 
         let stream_id = 1;
-        let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 2048, stream_id);
+        let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 128, stream_id);
         Codec::configure_codec(pin_widget, 0, register_interface, stream_format.clone(), stream_id, 0);
 
         // ########## write data to buffers ##########
@@ -211,10 +210,14 @@ impl IHDA {
         // }
 
 
-        let samples = vec![0u16; 500000];
+       let mut saw = Vec::new();
+        for i in 0u32..32768 {
+            let sample = (i%512 * 128) as u16;
+            saw.push(sample);
+        }
 
-        stream.write_data_to_buffer(0, &samples);
-        stream.write_data_to_buffer(1, &samples);
+        stream.write_data_to_buffer(0, &saw);
+        stream.write_data_to_buffer(1, &saw);
 
         // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
         unsafe { asm!("wbinvd"); }

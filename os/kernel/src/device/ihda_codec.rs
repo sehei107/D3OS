@@ -8,7 +8,7 @@ use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionL
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::device::ihda_controller::ControllerRegisterInterface;
 
-const MAX_AMOUNT_OF_CODECS: u8 = 15;
+pub const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET: u8 = 16;
 const MAX_AMPLIFIER_GAIN: u8 = u8::MAX;
 
@@ -44,138 +44,6 @@ impl Codec {
             codec_address,
             root_node,
         }
-    }
-
-    // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
-    // then find all function group nodes and widgets associated with a codec
-    pub fn scan_for_available_codecs(register_interface: &ControllerRegisterInterface) -> Vec<Codec> {
-        let mut codecs: Vec<Codec> = Vec::new();
-        for index in 0..MAX_AMOUNT_OF_CODECS {
-            // _TODO_: create proper API method in RegisterInterface
-            if register_interface.wakests().assert_bit(index) {
-                let root_node_addr = NodeAddress::new(index, 0x0);
-
-                let vendor_id_info = VendorIdResponse::try_from(register_interface.send_command(&GetParameter(root_node_addr.clone(), VendorId))).unwrap();
-                let revision_id_info = RevisionIdResponse::try_from(register_interface.send_command(&GetParameter(root_node_addr.clone(), RevisionId))).unwrap();
-                let subordinate_node_count_info = SubordinateNodeCountResponse::try_from(register_interface.send_command(&GetParameter(root_node_addr.clone(), SubordinateNodeCount))).unwrap();
-
-                let function_group_nodes = Codec::scan_codec_for_available_function_groups(register_interface, &root_node_addr, &subordinate_node_count_info);
-
-                let root_node = RootNode::new(index, vendor_id_info, revision_id_info, subordinate_node_count_info, function_group_nodes);
-                codecs.push(Codec::new(index, root_node));
-            }
-        }
-        codecs
-    }
-
-    fn scan_codec_for_available_function_groups(
-        register_interface: &ControllerRegisterInterface,
-        root_node_addr: &NodeAddress,
-        snci: &SubordinateNodeCountResponse
-    ) -> Vec<FunctionGroupNode> {
-        let mut fg_nodes: Vec<FunctionGroupNode> = Vec::new();
-        let codec_address = *root_node_addr.codec_address();
-
-        for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
-            let fg_address = NodeAddress::new(codec_address, node_id);
-
-            let subordinate_node_count_info = SubordinateNodeCountResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), SubordinateNodeCount))).unwrap();
-            let function_group_type_info = FunctionGroupTypeResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), FunctionGroupType))).unwrap();
-            let afg_caps = AudioFunctionGroupCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), AudioFunctionGroupCapabilities))).unwrap();
-            let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), SampleSizeRateCAPs))).unwrap();
-            let supported_stream_formats = SupportedStreamFormatsResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), SupportedStreamFormats))).unwrap();
-            let input_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), InputAmpCapabilities))).unwrap();
-            let output_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), OutputAmpCapabilities))).unwrap();
-            let supported_power_states = SupportedPowerStatesResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), SupportedPowerStates))).unwrap();
-            let gpio_count = GPIOCountResponse::try_from(register_interface.send_command(&GetParameter(fg_address.clone(), GPIOCount))).unwrap();
-
-            let widgets = Codec::scan_function_group_for_available_widgets(register_interface, &fg_address, &subordinate_node_count_info);
-
-            fg_nodes.push(FunctionGroupNode::new(
-                fg_address,
-                subordinate_node_count_info,
-                function_group_type_info,
-                afg_caps,
-                sample_size_rate_caps,
-                supported_stream_formats,
-                input_amp_caps,
-                output_amp_caps,
-                supported_power_states,
-                gpio_count,
-                widgets));
-        }
-        fg_nodes
-    }
-
-    fn scan_function_group_for_available_widgets(
-        register_interface: &ControllerRegisterInterface,
-        fg_addr: &NodeAddress,
-        snci: &SubordinateNodeCountResponse
-    ) -> Vec<WidgetNode> {
-        let mut widgets: Vec<WidgetNode> = Vec::new();
-        let codec_address = *fg_addr.codec_address();
-
-        for node_id in *snci.starting_node_number()..(*snci.starting_node_number() + *snci.total_number_of_nodes()) {
-            let widget_address = NodeAddress::new(codec_address, node_id);
-            let widget_info: WidgetInfoContainer;
-            let audio_widget_capabilities_info = AudioWidgetCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), AudioWidgetCapabilities))).unwrap();
-
-            match audio_widget_capabilities_info.widget_type() {
-                WidgetType::AudioOutput => {
-                    let ssrc_info = SampleSizeRateCAPsResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SampleSizeRateCAPs))).unwrap();
-                    let sf_info = SupportedStreamFormatsResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SupportedStreamFormats))).unwrap();
-                    let output_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), OutputAmpCapabilities))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), ProcessingCapabilities))).unwrap();
-
-                    widget_info = WidgetInfoContainer::AudioOutputConverter(ssrc_info, sf_info, output_amp_caps, supported_power_states, processing_capabilities);
-                }
-                WidgetType::AudioInput => {
-                    let ssrc_info = SampleSizeRateCAPsResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SampleSizeRateCAPs))).unwrap();
-                    let sf_info = SupportedStreamFormatsResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SupportedStreamFormats))).unwrap();
-                    let input_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), InputAmpCapabilities))).unwrap();
-                    let connection_list_length = ConnectionListLengthResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), ConnectionListLength))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), ProcessingCapabilities))).unwrap();
-
-                    widget_info = WidgetInfoContainer::AudioInputConverter(ssrc_info, sf_info, input_amp_caps, connection_list_length, supported_power_states, processing_capabilities);
-                }
-                WidgetType::AudioMixer => {
-                    widget_info = WidgetInfoContainer::Mixer;
-                }
-                WidgetType::AudioSelector => {
-                    widget_info = WidgetInfoContainer::Selector;
-                }
-
-                WidgetType::PinComplex => {
-                    let pin_caps = PinCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), PinCapabilities))).unwrap();
-                    let input_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), InputAmpCapabilities))).unwrap();
-                    let output_amp_caps = AmpCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), OutputAmpCapabilities))).unwrap();
-                    let connection_list_length = ConnectionListLengthResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), ConnectionListLength))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(register_interface.send_command(&GetParameter(widget_address.clone(), ProcessingCapabilities))).unwrap();
-                    let configuration_default = ConfigurationDefaultResponse::try_from(register_interface.send_command(&GetConfigurationDefault(widget_address.clone()))).unwrap();
-                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(widget_address.clone(), GetConnectionListEntryPayload::new(0)))).unwrap();
-
-                    widget_info = WidgetInfoContainer::PinComplex(pin_caps, input_amp_caps, output_amp_caps, connection_list_length, supported_power_states, processing_capabilities, configuration_default, first_connection_list_entries);
-                }
-                WidgetType::PowerWidget => {
-                    widget_info = WidgetInfoContainer::Power;
-                }
-                WidgetType::VolumeKnobWidget => {
-                    widget_info = WidgetInfoContainer::VolumeKnob;
-                }
-                WidgetType::BeepGeneratorWidget => {
-                    widget_info = WidgetInfoContainer::BeepGenerator;
-                }
-                WidgetType::VendorDefinedAudioWidget => {
-                    widget_info = WidgetInfoContainer::VendorDefined;
-                }
-            }
-
-            widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
-        }
-        widgets
     }
 
     pub fn find_line_out_pin_widgets_connected_to_jack(widgets: &Vec<WidgetNode>) -> Vec<&WidgetNode> {
