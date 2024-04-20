@@ -55,6 +55,9 @@ impl IHDA {
         // register_interface.setup_ihda_config_space();
         info!("IHDA configuration space set up");
 
+        register_interface.init_dma_position_buffer();
+        info!("DMA position buffer set up and running");
+
         register_interface.init_corb();
         register_interface.init_rirb();
         register_interface.start_corb();
@@ -405,12 +408,6 @@ impl IHDA {
         let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 2048, stream_id);
         Self::configure_codec(pin_widget, 0, register_interface, stream_format.clone(), stream_id, 0);
 
-        // ########## set up DMA position buffer (not necessary, only for debugging) ##########
-
-        let dmapib_frame_range = alloc_no_cache_dma_memory(1);
-
-        register_interface.set_dma_position_buffer_address(dmapib_frame_range.start);
-        register_interface.enable_dma_position_buffer();
 
         // ########## start stream ##########
 

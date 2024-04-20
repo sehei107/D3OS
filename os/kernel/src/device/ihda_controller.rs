@@ -28,7 +28,7 @@ const BIT_ASSERTION_TIMEOUT_IN_MS: usize = 10000;
 const IMMEDIATE_COMMAND_TIMEOUT_IN_MS: usize = 100;
 const BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES: u64 = 16;
 const MAX_AMOUNT_OF_BUFFER_DESCRIPTOR_LIST_ENTRIES: u64 = 256;
-const DMA_POSITION_IN_BUFFER_ENTRY_SIZE: u64 = 32;
+const DMA_POSITION_IN_BUFFER_ENTRY_SIZE_IN_BYTES: u64 = 4;
 const CONTAINER_SIZE_FOR_24BIT_SAMPLE: u32 = 32;
 const CONTAINER_SIZE_FOR_32BIT_SAMPLE: u32 = 32;
 
@@ -812,8 +812,16 @@ impl ControllerRegisterInterface {
         self.dpibubase.write(ubase);
     }
 
+    pub fn init_dma_position_buffer(&self) {
+        let dmapib_frame_range = alloc_no_cache_dma_memory(1);
+
+        self.set_dma_position_buffer_address(dmapib_frame_range.start);
+        self.enable_dma_position_buffer();
+    }
+
     pub fn stream_descriptor_position_in_current_buffer(&self, stream_descriptor_number: u32) -> u32 {
-        let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE);
+        // see specification section 3.6.1
+        let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE_IN_BYTES * 2);
         // debug!("address: {:#x}", address);
         unsafe { (address as *mut u32).read() }
     }
