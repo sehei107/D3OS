@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::ops::BitOr;
@@ -14,7 +15,7 @@ use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
 use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, ConfigDefDefaultDevice, ConfigDefPortConnectivity, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroupTypeResponse, GPIOCountResponse, PinCapabilitiesResponse, ProcessingCapabilitiesResponse, RevisionIdResponse, SampleSizeRateCAPsResponse, SupportedStreamFormatsResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, VendorIdResponse, WidgetType, PinWidgetControlResponse, VoltageReferenceSignalLevel, GetConnectionListEntryPayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetPinWidgetControlPayload, SetAmplifierGainMutePayload, SetChannelStreamIdPayload, SetStreamFormatPayload, BitsPerSample, StreamType};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_controller::{ControllerRegisterInterface, BufferDescriptorList, alloc_no_cache_dma_memory, CyclicBuffer, StreamDescriptorRegisters, Stream};
+use crate::device::ihda_controller::{ControllerRegisterInterface, Stream};
 use crate::device::ihda_codec::{Codec, FunctionGroupNode, NodeAddress, RootNode, WidgetInfoContainer, WidgetNode};
 use crate::device::pci::PciBus;
 use crate::device::pit::Timer;
@@ -407,6 +408,35 @@ impl IHDA {
         let stream_id = 1;
         let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 2048, stream_id);
         Self::configure_codec(pin_widget, 0, register_interface, stream_format.clone(), stream_id, 0);
+
+        // ########## write data to buffers ##########
+
+        // let range = *stream.cyclic_buffer().length_in_bytes() / 2;
+        //
+        // for index in 0..range {
+        //     unsafe {
+        //         let address = *stream.cyclic_buffer().audio_buffers().get(0).unwrap().start_address() + (index as u64 * 2);
+        //         if (index < 5) | (index == (range  - 1)) {
+        //             let value = (address as *mut u16).read();
+        //             debug!("address: {:#x}, value: {:#x}", address, value)
+        //         }
+        //         (address as *mut u16).write((index as u16 % 160) * 409);
+        //         // (address as *mut u16).write(0);
+        //         if (index < 5) | (index == (range - 1)) {
+        //             let value = (address as *mut u16).read();
+        //             debug!("address: {:#x}, value: {:#x}", address, value)
+        //         }
+        //     }
+        // }
+
+
+        let samples = vec![0u16; 500000];
+
+        stream.write_data_to_buffer(0, &samples);
+        stream.write_data_to_buffer(1, &samples);
+
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        unsafe { asm!("wbinvd"); }
 
 
         // ########## start stream ##########
