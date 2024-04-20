@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
+use core::arch::asm;
 use core::fmt::LowerHex;
 use core::ptr::NonNull;
 use log::debug;
@@ -919,8 +920,8 @@ impl ControllerRegisterInterface {
 
         // reset RIRBWP
         self.rirbwp().set_bit(15);
-        self.rirbwp.dump();
-        Timer::wait(2000);
+        // self.rirbwp.dump();
+        // Timer::wait(2000);
     }
 
     pub fn start_corb(&self) {
@@ -1121,6 +1122,95 @@ impl CyclicBuffer {
             buffer.write_sample_to_buffer(sample, sample_index as u64)
         }
     }
+}
+
+#[derive(Getters)]
+pub struct Stream<'a> {
+    sd_registers: &'a StreamDescriptorRegisters,
+    buffer_descriptor_list: BufferDescriptorList,
+    cyclic_buffer: CyclicBuffer,
+}
+
+impl<'a> Stream<'a> {
+
+    pub fn new(
+        sd_registers: &'a StreamDescriptorRegisters,
+        stream_format: SetStreamFormatPayload,
+        buffer_amount: u32,
+        pages_per_buffer: u32,
+        stream_id: u8
+    ) -> Self {
+        // ########## allocate data buffers and bdl ##########
+
+        let cyclic_buffer = CyclicBuffer::new(buffer_amount, pages_per_buffer);
+
+        let bdl = BufferDescriptorList::new(&cyclic_buffer);
+
+
+        // ########## construct bdl ##########
+
+        for index in 0..=*bdl.last_valid_index() {
+            bdl.set_entry(index as u64, bdl.entries().get(index as usize).unwrap());
+        }
+
+        // ########## write data to buffers ##########
+
+        let range = *cyclic_buffer.length_in_bytes() / 2;
+
+        for index in 0..range {
+            unsafe {
+                let address = *cyclic_buffer.audio_buffers().get(0).unwrap().start_address() + (index as u64 * 2);
+                if (index < 5) | (index == (range  - 1)) {
+                    let value = (address as *mut u16).read();
+                    debug!("address: {:#x}, value: {:#x}", address, value)
+                }
+                (address as *mut u16).write((index as u16 % 160) * 409);
+                // (address as *mut u16).write(0);
+                if (index < 5) | (index == (range - 1)) {
+                    let value = (address as *mut u16).read();
+                    debug!("address: {:#x}, value: {:#x}", address, value)
+                }
+            }
+        }
+
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        unsafe { asm!("wbinvd"); }
+
+        // ########## allocate and configure stream descriptor ##########
+
+        sd_registers.reset_stream();
+
+        sd_registers.set_bdl_pointer_address(*bdl.base_address());
+
+        sd_registers.set_cyclic_buffer_lenght(*cyclic_buffer.length_in_bytes());
+
+        sd_registers.set_last_valid_index(*bdl.last_valid_index());
+
+        sd_registers.set_stream_format(stream_format.clone());
+        // sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
+
+        sd_registers.set_stream_id(stream_id);
+
+        // sd_registers.set_interrupt_on_completion_enable_bit();
+        // sd_registers.set_fifo_error_interrupt_enable_bit();
+        // sd_registers.set_descriptor_error_interrupt_enable_bit();
+
+        Self {
+            sd_registers,
+            buffer_descriptor_list: bdl,
+            cyclic_buffer,
+        }
+    }
+
+    pub fn run(&self) {
+        self.sd_registers.set_stream_run_bit();
+    }
+
+    pub fn stop(&self) {
+        self.sd_registers.clear_stream_run_bit();
+    }
+
+
 }
 
 
