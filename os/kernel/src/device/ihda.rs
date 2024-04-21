@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::ops::BitOr;
@@ -170,8 +169,7 @@ impl IHDA {
     }
 
     fn prepare_default_stereo_output(register_interface: &ControllerRegisterInterface, codec: &Codec) {
-        let widgets = codec.root_node().function_group_nodes().get(0).unwrap().widgets();
-        let line_out_pin_widgets_connected_to_jack = Codec::find_line_out_pin_widgets_connected_to_jack(widgets);
+        let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
         let default_output = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
 
         Self::default_stereo_setup(default_output, register_interface);
@@ -187,7 +185,7 @@ impl IHDA {
 
         let stream_id = 1;
         let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 128, stream_id);
-        Codec::configure_codec(pin_widget, 0, register_interface, stream_format.clone(), stream_id, 0);
+        register_interface.configure_codec(pin_widget, 0, stream_format.clone(), stream_id, 0);
 
         // ########## write data to buffers ##########
 

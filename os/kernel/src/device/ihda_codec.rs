@@ -3,10 +3,6 @@ use core::fmt::LowerHex;
 use core::ops::BitAnd;
 use num_traits::int::PrimInt;
 use derive_getters::Getters;
-use crate::device::ihda::IHDA;
-use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
-use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
-use crate::device::ihda_controller::ControllerRegisterInterface;
 
 pub const MAX_AMOUNT_OF_CODECS: u8 = 15;
 const MAX_AMOUNT_OF_AMPLIFIERS_IN_AMP_WIDGET: u8 = 16;
@@ -35,20 +31,66 @@ impl NodeAddress {
 #[derive(Debug, Getters)]
 pub struct Codec {
     codec_address: u8,
-    root_node: RootNode,
+    vendor_id: VendorIdResponse,
+    revision_id: RevisionIdResponse,
+    function_groups: Vec<FunctionGroup>
 }
 
 impl Codec {
-    pub fn new(codec_address: u8, root_node: RootNode) -> Self {
+    pub fn new(codec_address: u8, vendor_id: VendorIdResponse, revision_id: RevisionIdResponse, function_groups: Vec<FunctionGroup>) -> Self {
         Codec {
             codec_address,
-            root_node,
+            vendor_id,
+            revision_id,
+            function_groups,
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct FunctionGroup {
+    function_group_node_address: NodeAddress,
+    function_group_type: FunctionGroupTypeResponse,
+    audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
+    sample_size_rate_caps: SampleSizeRateCAPsResponse,
+    supported_stream_formats: SupportedStreamFormatsResponse,
+    input_amp_caps: AmpCapabilitiesResponse,
+    output_amp_caps: AmpCapabilitiesResponse,
+    supported_power_states: SupportedPowerStatesResponse,
+    gpio_count: GPIOCountResponse,
+    widgets: Vec<WidgetNode>,
+}
+
+impl FunctionGroup {
+    pub fn new(
+        address: NodeAddress,
+        function_group_type: FunctionGroupTypeResponse,
+        audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
+        sample_size_rate_caps: SampleSizeRateCAPsResponse,
+        supported_stream_formats: SupportedStreamFormatsResponse,
+        input_amp_caps: AmpCapabilitiesResponse,
+        output_amp_caps: AmpCapabilitiesResponse,
+        supported_power_states: SupportedPowerStatesResponse,
+        gpio_count: GPIOCountResponse,
+        widgets: Vec<WidgetNode>
+    ) -> Self {
+        FunctionGroup {
+            function_group_node_address: address,
+            function_group_type,
+            audio_function_group_caps,
+            sample_size_rate_caps,
+            supported_stream_formats,
+            input_amp_caps,
+            output_amp_caps,
+            supported_power_states,
+            gpio_count,
+            widgets
         }
     }
 
-    pub fn find_line_out_pin_widgets_connected_to_jack(widgets: &Vec<WidgetNode>) -> Vec<&WidgetNode> {
+    pub fn find_line_out_pin_widgets_connected_to_jack(&self) -> Vec<&WidgetNode> {
         let mut pin_widgets_connected_to_jack = Vec::new();
-        for widget in widgets.iter() {
+        for widget in self.widgets().iter() {
             match widget.audio_widget_capabilities().widget_type() {
                 WidgetType::PinComplex => {
                     let config_defaults = match widget.widget_info() {
@@ -77,140 +119,6 @@ impl Codec {
 
         pin_widgets_connected_to_jack
     }
-
-    pub fn configure_codec(pin_widget: &WidgetNode, connection_list_entry: usize, register_interface: &ControllerRegisterInterface, stream_format: SetStreamFormatPayload, stream_id: u8, channel: u8) {
-        // ########## configure codec ##########
-
-        // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        register_interface.send_command(&SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
-
-        // activate input and output for pin widget
-        let pin_widget_control = PinWidgetControlResponse::try_from(register_interface.send_command(&GetPinWidgetControl(*pin_widget.address()))).unwrap();
-        /* after the following command, plugging headphones in and out the jack should make an audible noise */
-        register_interface.send_command(&SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::new(
-            match pin_widget_control.voltage_reference_enable() {
-                VoltageReferenceSignalLevel::HiZ => VoltageReferenceSignalLevel::HiZ,
-                VoltageReferenceSignalLevel::FiftyPercent => VoltageReferenceSignalLevel::FiftyPercent,
-                VoltageReferenceSignalLevel::Ground0V => VoltageReferenceSignalLevel::Ground0V,
-                VoltageReferenceSignalLevel::EightyPercent => VoltageReferenceSignalLevel::EightyPercent,
-                VoltageReferenceSignalLevel::HundredPercent => VoltageReferenceSignalLevel::HundredPercent,
-            },
-            true,
-            true,
-            *pin_widget_control.h_phn_enable()
-        )));
-
-        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
-        // debug!("connection list entries pin widget: {:?}", connection_list_entries_pin);
-
-
-        let mixer_widget = if connection_list_entry == 0 {
-            NodeAddress::new(0, *connection_list_entries_pin.connection_list_entry_at_offset_index())
-        } else {
-            NodeAddress::new(0, *connection_list_entries_pin.connection_list_entry_at_offset_index_plus_one())
-        };
-
-
-        // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        register_interface.send_command(&SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
-
-        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
-        let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer1.connection_list_entry_at_offset_index());
-
-        // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
-        // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
-        // default gain value is 87
-        register_interface.send_command(&SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
-
-        // set stream id
-        register_interface.send_command(&SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
-
-        // set stream format
-        register_interface.send_command(&SetStreamFormat(audio_out_widget, stream_format.clone()));
-    }
-}
-
-pub trait Node {
-    fn address(&self) -> &NodeAddress;
-}
-
-#[derive(Debug, Getters)]
-pub struct RootNode {
-    address: NodeAddress,
-    vendor_id: VendorIdResponse,
-    revision_id: RevisionIdResponse,
-    function_group_nodes: Vec<FunctionGroupNode>,
-}
-
-impl Node for RootNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl RootNode {
-    pub fn new(
-        codec_address: u8,
-        vendor_id: VendorIdResponse,
-        revision_id: RevisionIdResponse,
-        function_group_nodes: Vec<FunctionGroupNode>
-    ) -> Self {
-        RootNode {
-            address: NodeAddress::new(codec_address, 0),
-            vendor_id,
-            revision_id,
-            function_group_nodes,
-        }
-    }
-}
-
-#[derive(Debug, Getters)]
-pub struct FunctionGroupNode {
-    address: NodeAddress,
-    function_group_type: FunctionGroupTypeResponse,
-    audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
-    sample_size_rate_caps: SampleSizeRateCAPsResponse,
-    supported_stream_formats: SupportedStreamFormatsResponse,
-    input_amp_caps: AmpCapabilitiesResponse,
-    output_amp_caps: AmpCapabilitiesResponse,
-    // function group node must provide a SupportedPowerStatesInfo, but QEMU doesn't do it... so this only an Option<SupportedPowerStatesInfo> for now
-    supported_power_states: SupportedPowerStatesResponse,
-    gpio_count: GPIOCountResponse,
-    widgets: Vec<WidgetNode>,
-}
-
-impl Node for FunctionGroupNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
-}
-
-impl FunctionGroupNode {
-    pub fn new(
-        address: NodeAddress,
-        function_group_type: FunctionGroupTypeResponse,
-        audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
-        sample_size_rate_caps: SampleSizeRateCAPsResponse,
-        supported_stream_formats: SupportedStreamFormatsResponse,
-        input_amp_caps: AmpCapabilitiesResponse,
-        output_amp_caps: AmpCapabilitiesResponse,
-        supported_power_states: SupportedPowerStatesResponse,
-        gpio_count: GPIOCountResponse,
-        widgets: Vec<WidgetNode>
-    ) -> Self {
-        FunctionGroupNode {
-            address,
-            function_group_type,
-            audio_function_group_caps,
-            sample_size_rate_caps,
-            supported_stream_formats,
-            input_amp_caps,
-            output_amp_caps,
-            supported_power_states,
-            gpio_count,
-            widgets
-        }
-    }
 }
 
 #[derive(Debug, Getters)]
@@ -218,12 +126,6 @@ pub struct WidgetNode {
     address: NodeAddress,
     audio_widget_capabilities: AudioWidgetCapabilitiesResponse,
     widget_info: WidgetInfoContainer,
-}
-
-impl Node for WidgetNode {
-    fn address(&self) -> &NodeAddress {
-        &self.address
-    }
 }
 
 impl WidgetNode {
@@ -269,7 +171,13 @@ pub enum WidgetInfoContainer {
         ConfigurationDefaultResponse,
         ConnectionListEntryResponse,
     ),
-    Mixer,
+    Mixer(
+        AmpCapabilitiesResponse,
+        AmpCapabilitiesResponse,
+        ConnectionListLengthResponse,
+        SupportedPowerStatesResponse,
+        ProcessingCapabilitiesResponse,
+    ),
     Selector,
     Power,
     VolumeKnob,
