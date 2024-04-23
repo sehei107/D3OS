@@ -11,8 +11,8 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
-use crate::device::ihda_controller::{ControllerRegisterInterface, Stream};
-use crate::device::ihda_codec::{BitsPerSample, Codec, SetStreamFormatPayload, StreamType, WidgetNode};
+use crate::device::ihda_controller::{Controller, Stream};
+use crate::device::ihda_codec::{BitsPerSample, Codec, SetStreamFormatPayload, StreamType, Widget};
 use crate::device::pci::PciBus;
 use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
@@ -39,31 +39,31 @@ impl IHDA {
         let ihda_device = Self::find_ihda_device(pci_bus);
 
         Self::configure_pci(pci_bus, ihda_device);
-        let register_interface = Self::map_mmio_space(pci_bus, ihda_device);
+        let controller = Self::map_mmio_space(pci_bus, ihda_device);
         Self::connect_interrupt_line(pci_bus, ihda_device);
 
 
-        register_interface.reset_controller();
+        controller.reset();
         info!("IHDA Controller reset complete");
 
         // the following function call is irrelevant when not using interrupts
         // register_interface.setup_ihda_config_space();
         info!("IHDA configuration space set up");
 
-        register_interface.init_dma_position_buffer();
+        controller.init_dma_position_buffer();
         info!("DMA position buffer set up and running");
 
-        register_interface.init_corb();
-        register_interface.init_rirb();
-        register_interface.start_corb();
-        register_interface.start_rirb();
+        // interview sound card
+        let codecs = controller.scan_for_available_codecs();
+
+        controller.init_corb();
+        controller.init_rirb();
+        controller.start_corb();
+        controller.start_rirb();
 
         info!("CORB and RIRB set up and running");
 
-        // interview sound card
-        let codecs = register_interface.scan_for_available_codecs();
-
-        IHDA::prepare_default_stereo_output(&register_interface, &codecs.get(0).unwrap());
+        IHDA::prepare_default_stereo_output(&controller, &codecs.get(0).unwrap());
 
         debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
@@ -119,7 +119,7 @@ impl IHDA {
         info!("Set Bus Master bit and Memory Space bit in PCI configuration space");
     }
 
-    fn map_mmio_space(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> ControllerRegisterInterface {
+    fn map_mmio_space(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> Controller {
         // IHDA-MMIO address is always placed in bar 0 of the device's PCI configuration space
         let bar0 = ihda_device.bar(0, pci_bus.config_space()).unwrap();
 
@@ -151,7 +151,7 @@ impl IHDA {
         );
         info!("Mapped MMIO registers to address {:#x}", mmio_base_address);
 
-        return ControllerRegisterInterface::new(mmio_base_address);
+        return Controller::new(mmio_base_address);
     }
 
     fn connect_interrupt_line(pci_bus: &PciBus, ihda_device: &EndpointHeader) {
@@ -168,7 +168,7 @@ impl IHDA {
         */
     }
 
-    fn prepare_default_stereo_output(register_interface: &ControllerRegisterInterface, codec: &Codec) {
+    fn prepare_default_stereo_output(register_interface: &Controller, codec: &Codec) {
         let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
         let default_output = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
 
@@ -176,7 +176,7 @@ impl IHDA {
 
     }
 
-    fn default_stereo_setup(pin_widget: &WidgetNode, register_interface: &ControllerRegisterInterface) {
+    fn default_stereo_setup(pin_widget: &Widget, register_interface: &Controller) {
         // ########## determine appropriate stream parameters ##########
         let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
 
@@ -255,36 +255,6 @@ impl IHDA {
         // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
         // Timer::wait(2000);
         // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-
-        // register_interface.rirbwp().set_bit(15);
-        // Timer::wait(1000);
-        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 4) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 4) as *mut u32).read()); }
-        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
-        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
-        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
-        //
-        // unsafe { ((register_interface.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
-        // // unsafe { ((register_interface.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
-        //
-        // register_interface.corbwp().write(register_interface.corbwp().read() + 1);
-        // Timer::wait(200);
-        // unsafe { debug!("CORB entry 0: {:#x}", (register_interface.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (register_interface.rirb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((register_interface.corb_address() + 4) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((register_interface.rirb_address() + 4) as *mut u32).read()); }
-        // debug!("CORBWP: {:#x}", register_interface.corbwp().read());
-        // debug!("CORBRP: {:#x}", register_interface.corbrp().read());
-        // debug!("RIRBWP: {:#x}", register_interface.rirbwp().read());
-        // Timer::wait(200);
-        //
-        //
-        // debug!("CORB address: {:#x}", register_interface.corb_address());
-        // debug!("RIRB address: {:#x}", register_interface.rirb_address());
-
-
 
 
         Timer::wait(600000);

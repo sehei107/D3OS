@@ -58,7 +58,7 @@ pub struct FunctionGroup {
     output_amp_caps: AmpCapabilitiesResponse,
     supported_power_states: SupportedPowerStatesResponse,
     gpio_count: GPIOCountResponse,
-    widgets: Vec<WidgetNode>,
+    widgets: Vec<Widget>,
 }
 
 impl FunctionGroup {
@@ -72,7 +72,7 @@ impl FunctionGroup {
         output_amp_caps: AmpCapabilitiesResponse,
         supported_power_states: SupportedPowerStatesResponse,
         gpio_count: GPIOCountResponse,
-        widgets: Vec<WidgetNode>
+        widgets: Vec<Widget>
     ) -> Self {
         FunctionGroup {
             function_group_node_address: address,
@@ -88,7 +88,7 @@ impl FunctionGroup {
         }
     }
 
-    pub fn find_line_out_pin_widgets_connected_to_jack(&self) -> Vec<&WidgetNode> {
+    pub fn find_line_out_pin_widgets_connected_to_jack(&self) -> Vec<&Widget> {
         let mut pin_widgets_connected_to_jack = Vec::new();
         for widget in self.widgets().iter() {
             match widget.audio_widget_capabilities().widget_type() {
@@ -122,15 +122,15 @@ impl FunctionGroup {
 }
 
 #[derive(Debug, Getters)]
-pub struct WidgetNode {
+pub struct Widget {
     address: NodeAddress,
     audio_widget_capabilities: AudioWidgetCapabilitiesResponse,
     widget_info: WidgetInfoContainer,
 }
 
-impl WidgetNode {
+impl Widget {
     pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesResponse, widget_info: WidgetInfoContainer) -> Self {
-        WidgetNode {
+        Widget {
             address,
             audio_widget_capabilities,
             widget_info
@@ -139,7 +139,7 @@ impl WidgetNode {
 
     pub fn max_number_of_channels(&self) -> u8 {
         // this formula can be found in section 7.3.4.6, Audio Widget Capabilities of the specification
-        (self.audio_widget_capabilities.chan_count_ext() << 1) + (*self.audio_widget_capabilities.chan_count_lsb() as u8) + 1
+        (self.audio_widget_capabilities.chan_count_ext() << 1) + (*self.audio_widget_capabilities.chan_count_lsb() as u8) + 1u8
     }
 }
 

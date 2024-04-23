@@ -13,7 +13,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, WidgetInfoContainer, WidgetNode, WidgetType};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, WidgetInfoContainer, Widget, WidgetType};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::memory::PAGE_SIZE;
@@ -338,7 +338,7 @@ pub enum FIFOWatermark {
 
 // representation of all IHDA registers
 #[derive(Getters)]
-pub struct ControllerRegisterInterface {
+pub struct Controller {
     gcap: Register<u16>,
     vmin: Register<u8>,
     vmaj: Register<u8>,
@@ -387,7 +387,7 @@ pub struct ControllerRegisterInterface {
     // sdlpiba_aliases: Vec<Register<u32>>,
 }
 
-impl ControllerRegisterInterface {
+impl Controller {
     pub fn new(mmio_base_address: u64) -> Self {
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
@@ -526,7 +526,7 @@ impl ControllerRegisterInterface {
     }
 
     // ########## GCTL ##########
-    pub fn reset_controller(&self) {
+    pub fn reset(&self) {
         self.gctl.set_bit(0);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
@@ -867,7 +867,7 @@ impl ControllerRegisterInterface {
         assert_eq!(corbsize, 0b10);
 
         // setup MMIO space for Command Outbound Ring Buffer – CORB
-        let corb_frame_range = memory::physical::alloc(1);
+        let corb_frame_range = memory::physical::alloc(2);
         match corb_frame_range {
             PhysFrameRange { start, end: _ } => {
                 self.set_corb_address(start);
@@ -920,7 +920,7 @@ impl ControllerRegisterInterface {
         self.rirbctl().clear_all_bits();
 
         // setup MMIO space for Response Inbound Ring Buffer – RIRB
-        let rirb_frame_range = memory::physical::alloc(1);
+        let rirb_frame_range = memory::physical::alloc(4);
         match rirb_frame_range {
             PhysFrameRange { start, end: _ } => {
                 self.set_rirb_address(start);
@@ -944,6 +944,36 @@ impl ControllerRegisterInterface {
         self.rirbctl().set_bit(0);
         self.rirbctl().set_bit(1);
         self.rirbctl().set_bit(2);
+
+        self.rirbwp().set_bit(15);
+        Timer::wait(1000);
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        self.corbwp().dump();
+        self.corbrp().dump();
+        self.rirbwp().dump();
+
+        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
+        // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
+
+        debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.send_command(&GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
+
+        self.corbwp().write(self.corbwp().read() + 1);
+        Timer::wait(200);
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        self.corbwp().dump();
+        self.corbrp().dump();
+        self.rirbwp().dump();
+        Timer::wait(20000);
+
+
+        debug!("CORB address: {:#x}", self.corb_address());
+        debug!("RIRB address: {:#x}", self.rirb_address());
     }
 
     pub fn send_command(&self, command: &Command) -> Response {
@@ -1002,8 +1032,8 @@ impl ControllerRegisterInterface {
         function_groups
     }
 
-    fn scan_function_group_for_available_widgets(&self, fg_address: NodeAddress) -> Vec<WidgetNode> {
-        let mut widgets: Vec<WidgetNode> = Vec::new();
+    fn scan_function_group_for_available_widgets(&self, fg_address: NodeAddress) -> Vec<Widget> {
+        let mut widgets: Vec<Widget> = Vec::new();
 
         let subordinate_node_count = SubordinateNodeCountResponse::try_from(self.send_command(&GetParameter(fg_address, SubordinateNodeCount))).unwrap();
         for node_id in *subordinate_node_count.starting_node_number()..(*subordinate_node_count.starting_node_number() + *subordinate_node_count.total_number_of_nodes()) {
@@ -1094,12 +1124,12 @@ impl ControllerRegisterInterface {
                 }
             }
 
-            widgets.push(WidgetNode::new(widget_address, audio_widget_capabilities_info, widget_info));
+            widgets.push(Widget::new(widget_address, audio_widget_capabilities_info, widget_info));
         }
         widgets
     }
 
-    pub fn configure_codec(&self, pin_widget: &WidgetNode, connection_list_entry: usize, stream_format: SetStreamFormatPayload, stream_id: u8, channel: u8) {
+    pub fn configure_codec(&self, pin_widget: &Widget, connection_list_entry: usize, stream_format: SetStreamFormatPayload, stream_id: u8, channel: u8) {
         // ########## configure codec ##########
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
