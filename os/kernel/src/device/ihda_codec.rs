@@ -185,7 +185,7 @@ pub enum WidgetInfoContainer {
     VendorDefined,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Command {
     GetParameter(NodeAddress, Parameter),
     GetConnectionSelect(NodeAddress),
@@ -267,7 +267,7 @@ impl Command {
 }
 
 // compare to table 140 in section 7.3.6 of the specification
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Parameter {
     VendorId,
     RevisionId,
@@ -310,7 +310,7 @@ impl Parameter {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetConnectionSelectPayload {
     connection_index: u8,
 }
@@ -327,7 +327,7 @@ impl SetConnectionSelectPayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct GetConnectionListEntryPayload {
     offset: u8,
 }
@@ -344,7 +344,7 @@ impl GetConnectionListEntryPayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct GetAmplifierGainMutePayload {
     amp_type: GetAmplifierGainMuteType,
     side: GetAmplifierGainMuteSide,
@@ -375,7 +375,7 @@ impl GetAmplifierGainMutePayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetAmplifierGainMutePayload {
     amp_type: SetAmplifierGainMuteType,
     side: SetAmplifierGainMuteSide,
@@ -413,33 +413,33 @@ impl SetAmplifierGainMutePayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum GetAmplifierGainMuteType {
     Input,
     Output,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum GetAmplifierGainMuteSide {
     Right,
     Left,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum SetAmplifierGainMuteType {
     Input,
     Output,
     Both,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum SetAmplifierGainMuteSide {
     Right,
     Left,
     Both,
 }
 
-#[derive(Clone, Debug, Getters)]
+#[derive(Clone, Copy, Debug, Getters)]
 pub struct SetStreamFormatPayload {
     number_of_channels: u8,
     bits_per_sample: BitsPerSample,
@@ -513,7 +513,7 @@ impl SetStreamFormatPayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetChannelStreamIdPayload {
     channel: u8,
     stream: u8,
@@ -532,7 +532,7 @@ impl SetChannelStreamIdPayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetPinWidgetControlPayload {
     voltage_reference_enable: VoltageReferenceSignalLevel,
     in_enable: bool,
@@ -567,7 +567,7 @@ impl SetPinWidgetControlPayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetEAPDBTLEnablePayload {
     btl_enable: bool,
     eapd_enable: bool,
@@ -592,7 +592,7 @@ impl SetEAPDBTLEnablePayload {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SetConverterChannelCountPayload {
     converter_channel_count: u8,
 }
@@ -1368,7 +1368,7 @@ impl TryFrom<Response> for StreamFormatResponse {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum BitsPerSample {
     Eight,
     Sixteen,
@@ -1377,7 +1377,7 @@ pub enum BitsPerSample {
     Thirtytwo,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum StreamType {
     PCM,
     NonPCM,
@@ -1451,7 +1451,7 @@ impl TryFrom<Response> for PinWidgetControlResponse {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum VoltageReferenceSignalLevel {
     HiZ,
     FiftyPercent,

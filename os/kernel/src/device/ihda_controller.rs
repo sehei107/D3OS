@@ -481,11 +481,11 @@ impl Controller {
     }
 
     // ########## GCAP ##########
-    pub fn supports_64bit_bdl_addresses(&self) -> bool {
+    fn supports_64bit_bdl_addresses(&self) -> bool {
         self.gcap.assert_bit(0)
     }
 
-    pub fn number_of_serial_data_out_signals(&self) -> u8 {
+    fn number_of_serial_data_out_signals(&self) -> u8 {
         match (self.gcap.read() >> 1) & 0b11 {
             0b00 => 1,
             0b01 => 2,
@@ -494,7 +494,7 @@ impl Controller {
         }
     }
 
-    pub fn number_of_bidirectional_streams_supported(&self) -> u8 {
+    fn number_of_bidirectional_streams_supported(&self) -> u8 {
         let bss = ((self.gcap.read() >> 3) & 0b1_1111) as u8;
         if bss > MAX_AMOUNT_OF_BIDIRECTIONAL_STREAMS {
             panic!("IHDA sound card reports an invalid number of Bidirectional Streams Supported")
@@ -502,26 +502,26 @@ impl Controller {
         bss
     }
 
-    pub fn number_of_input_streams_supported(&self) -> u8 {
+    fn number_of_input_streams_supported(&self) -> u8 {
         ((self.gcap.read() >> 8) & 0xF) as u8
     }
 
-    pub fn number_of_output_streams_supported(&self) -> u8 {
+    fn number_of_output_streams_supported(&self) -> u8 {
         ((self.gcap.read() >> 12) & 0xF) as u8
     }
 
     // ########## VMIN and VMAJ ##########
-    pub fn specification_version(&self) -> (u8, u8) {
+    fn specification_version(&self) -> (u8, u8) {
         (self.vmaj.read(), self.vmin.read())
     }
 
     // ########## OUTPAY ##########
-    pub fn output_payload_capacity_in_words(&self) -> u16 {
+    fn output_payload_capacity_in_words(&self) -> u16 {
         self.outpay.read()
     }
 
     // ########## INPAY ##########
-    pub fn input_payload_capacity_in_words(&self) -> u16 {
+    fn input_payload_capacity_in_words(&self) -> u16 {
         self.inpay.read()
     }
 
@@ -540,105 +540,105 @@ impl Controller {
         Timer::wait(1);
     }
 
-    // pub fn initiate_flush();
+    // fn initiate_flush();
 
-    pub fn assert_unsol_bit(&self) -> bool {
+    fn assert_unsol_bit(&self) -> bool {
         self.gctl.assert_bit(8)
     }
 
-    pub fn set_unsol_bit(&self) {
+    fn set_unsol_bit(&self) {
         self.gctl.set_bit(8);
     }
 
-    pub fn clear_unsol_bit(&self) {
+    fn clear_unsol_bit(&self) {
         self.gctl.clear_bit(8);
     }
 
     // ########## WAKEEN ##########
 
-    pub fn assert_sdin_wake_enable_bit(&self, sdin_index: u8) -> bool {
+    fn assert_sdin_wake_enable_bit(&self, sdin_index: u8) -> bool {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
         self.wakeen.assert_bit(sdin_index)
     }
 
-    pub fn set_sdin_wake_enable_bit(&self, sdin_index : u8) {
+    fn set_sdin_wake_enable_bit(&self, sdin_index : u8) {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
         self.wakeen.set_bit(sdin_index);
     }
 
-    pub fn clear_sdin_wake_enable_bit(&self, sdin_index : u8) {
+    fn clear_sdin_wake_enable_bit(&self, sdin_index : u8) {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
         self.wakeen.clear_bit(sdin_index);
     }
 
     // ########## WAKESTS ##########
 
-    pub fn assert_sdin_state_change_status_bit(&self, sdin_index: u8) -> bool {
+    fn assert_sdin_state_change_status_bit(&self, sdin_index: u8) -> bool {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
         self.wakests.assert_bit(sdin_index)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
-    pub fn clear_sdin_state_change_status_bit(&self, sdin_index : u8) {
+    fn clear_sdin_state_change_status_bit(&self, sdin_index : u8) {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
         self.wakests.set_bit(sdin_index);
     }
 
     // ########## GSTS ##########
 
-    pub fn assert_flush_status_bit(&self) -> bool {
+     fn assert_flush_status_bit(&self) -> bool {
         self.gsts.assert_bit(1)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
-    pub fn clear_flush_status_bit(&self) {
+     fn clear_flush_status_bit(&self) {
         self.gctl.set_bit(1);
     }
 
     // ########## GCAP2 ##########
-    pub fn energy_efficient_audio_capability(&self) -> bool {
+     fn energy_efficient_audio_capability(&self) -> bool {
         self.gsts.assert_bit(0)
     }
 
     // ########## OUTSTRMPAY ##########
-    pub fn output_stream_payload_capability_in_words(&self) -> u16 {
+     fn output_stream_payload_capability_in_words(&self) -> u16 {
         self.outstrmpay.read()
     }
 
     // ########## INSTRMPAY ##########
-    pub fn input_stream_payload_capability_in_words(&self) -> u16 {
+     fn input_stream_payload_capability_in_words(&self) -> u16 {
         self.instrmpay.read()
     }
 
     // ########## INTCTL ##########
 
-    // pub fn assert_stream_interrupt_enable_bit(&self) -> bool;
+    //  fn assert_stream_interrupt_enable_bit(&self) -> bool;
     //
-    // pub fn set_stream_interrupt_enable_bit(&self);
+    //  fn set_stream_interrupt_enable_bit(&self);
     //
-    // pub fn clear_stream_interrupt_enable_bit(&self);
+    //  fn clear_stream_interrupt_enable_bit(&self);
 
-    pub fn assert_controller_interrupt_enable_bit(&self) -> bool {
+     fn assert_controller_interrupt_enable_bit(&self) -> bool {
         self.intctl.assert_bit(30)
     }
 
-    pub fn set_controller_interrupt_enable_bit(&self) {
+     fn set_controller_interrupt_enable_bit(&self) {
         self.intctl.set_bit(30);
     }
 
-    pub fn clear_controller_interrupt_enable_bit(&self) {
+     fn clear_controller_interrupt_enable_bit(&self) {
         self.intctl.clear_bit(30);
     }
 
-    pub fn assert_global_interrupt_enable_bit(&self) -> bool {
+     fn assert_global_interrupt_enable_bit(&self) -> bool {
         self.intctl.assert_bit(31)
     }
 
-    pub fn set_global_interrupt_enable_bit(&self) {
+     fn set_global_interrupt_enable_bit(&self) {
         self.intctl.set_bit(31);
     }
 
-    pub fn clear_global_interrupt_enable_bit(&self) {
+     fn clear_global_interrupt_enable_bit(&self) {
         self.intctl.clear_bit(31);
     }
 
@@ -648,7 +648,7 @@ impl Controller {
 
     // ########## WALCLK ##########
 
-    pub fn wall_clock_counter(&self) -> u32 {
+     fn wall_clock_counter(&self) -> u32 {
         self.walclk.read()
     }
 
@@ -658,7 +658,7 @@ impl Controller {
 
     // ########## CORBLBASE and CORBUBASE ##########
 
-    pub fn set_corb_address(&self, start_frame: PhysFrame) {
+     fn set_corb_address(&self, start_frame: PhysFrame) {
         // _TODO_: assert that the DMA engine is not running before writing to CORBLASE and CORBUBASE (see specification, section 3.3.18 and 3.3.19)
         let start_address = start_frame.start_address().as_u64();
         let lbase = (start_address & 0xFFFFFFFF) as u32;
@@ -668,7 +668,7 @@ impl Controller {
         self.corbubase.write(ubase);
     }
 
-    pub fn corb_address(&self) -> u64 {
+     fn corb_address(&self) -> u64 {
         (self.corbubase.read() as u64) << 32 | (self.corblbase.read() >> 1 << 1) as u64
     }
 
@@ -708,19 +708,19 @@ impl Controller {
 
     // ########## CORBCTL ##########
 
-    pub fn assert_corb_memory_error_interrupt_enable_bit(&self) -> bool {
+     fn assert_corb_memory_error_interrupt_enable_bit(&self) -> bool {
         self.corbctl.assert_bit(0)
     }
 
-    pub fn set_corb_memory_error_interrupt_enable_bit(&self) {
+     fn set_corb_memory_error_interrupt_enable_bit(&self) {
         self.corbctl.set_bit(0);
     }
 
-    pub fn clear_corb_memory_error_interrupt_enable_bit(&self) {
+     fn clear_corb_memory_error_interrupt_enable_bit(&self) {
         self.corbctl.clear_bit(0);
     }
 
-    pub fn start_corb_dma(&self) {
+     fn start_corb_dma(&self) {
         self.corbctl.set_bit(1);
         
         // software must read back value (see specification, section 3.3.22)
@@ -732,7 +732,7 @@ impl Controller {
         }
     }
 
-    pub fn stop_corb_dma(&self) {
+     fn stop_corb_dma(&self) {
         self.corbctl.clear_bit(1);
 
         // software must read back value (see specification, section 3.3.22)
@@ -746,18 +746,18 @@ impl Controller {
 
     // ########## CORBSTS ##########
 
-    pub fn assert_corb_memory_error_indication_bit(&self) -> bool {
+     fn assert_corb_memory_error_indication_bit(&self) -> bool {
         self.corbsts.assert_bit(0)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
-    pub fn clear_corb_memory_error_indication_bit(&self) {
+     fn clear_corb_memory_error_indication_bit(&self) {
         self.corbsts.set_bit(0);
     }
 
     // ########## CORBSIZE ##########
 
-    pub fn corb_size_in_entries(&self) -> CorbSize {
+     fn corb_size_in_entries(&self) -> CorbSize {
         match (self.corbsize.read()) & 0b11 {
             0b00 => CorbSize::TwoEntries,
             0b01 => CorbSize::SixteenEntries,
@@ -766,7 +766,7 @@ impl Controller {
         }
     }
 
-    pub fn set_corb_size_in_entries(&self, corb_size: CorbSize) {
+     fn set_corb_size_in_entries(&self, corb_size: CorbSize) {
         match corb_size {
             CorbSize::TwoEntries => self.corbsize.write(self.corbsize.read() & 0b1111_11_00),
             CorbSize::SixteenEntries => self.corbsize.write(self.corbsize.read() & 0b1111_11_00 | 0b01),
@@ -774,7 +774,7 @@ impl Controller {
         }
     }
 
-    pub fn corb_size_capability(&self) -> RingbufferCapability {
+     fn corb_size_capability(&self) -> RingbufferCapability {
         RingbufferCapability::new(
             self.corbsize.assert_bit(4),
             self.corbsize.assert_bit(5),
@@ -784,7 +784,7 @@ impl Controller {
 
     // ########## RIRBLBASE and RIRBUBASE ##########
 
-    pub fn set_rirb_address(&self, start_frame: PhysFrame) {
+     fn set_rirb_address(&self, start_frame: PhysFrame) {
         // _TODO_: assert that the DMA engine is not running before writing to RIRBLASE and RIRBUBASE (see specification, section 3.3.18 and 3.3.19)
         let start_address = start_frame.start_address().as_u64();
         let lbase = (start_address & 0xFFFFFFFF) as u32;
@@ -794,7 +794,7 @@ impl Controller {
         self.rirbubase.write(ubase);
     }
 
-    pub fn rirb_address(&self) -> u64 {
+     fn rirb_address(&self) -> u64 {
         (self.rirbubase.read() as u64) << 32 | (self.rirblbase.read() >> 1 << 1) as u64
     }
 
@@ -815,39 +815,39 @@ impl Controller {
 
     // ########## RIRBCTL ##########
 
-    pub fn assert_response_interrupt_control_bit(&self) -> bool {
+     fn assert_response_interrupt_control_bit(&self) -> bool {
         self.rirbctl.assert_bit(0)
     }
 
-    pub fn set_response_interrupt_control_bit(&self) {
+     fn set_response_interrupt_control_bit(&self) {
         self.rirbctl.set_bit(0);
     }
 
-    pub fn clear_response_interrupt_control_bit(&self) {
+     fn clear_response_interrupt_control_bit(&self) {
         self.rirbctl.clear_bit(0);
     }
 
-    pub fn assert_rirb_dma_enable_bit(&self) -> bool {
+     fn assert_rirb_dma_enable_bit(&self) -> bool {
         self.rirbctl.assert_bit(1)
     }
 
-    pub fn start_rirb_dma(&self) {
+     fn start_rirb_dma(&self) {
         self.rirbctl.set_bit(1);
     }
 
-    pub fn stop_rirb_dma(&self) {
+     fn stop_rirb_dma(&self) {
         self.rirbctl.clear_bit(1);
     }
 
-    pub fn assert_response_overrun_interrupt_control_bit(&self) -> bool {
+     fn assert_response_overrun_interrupt_control_bit(&self) -> bool {
         self.rirbctl.assert_bit(2)
     }
 
-    pub fn set_response_overrun_interrupt_control_bit(&self) {
+     fn set_response_overrun_interrupt_control_bit(&self) {
         self.rirbctl.set_bit(2);
     }
 
-    pub fn clear_response_overrun_interrupt_control_bit(&self) {
+     fn clear_response_overrun_interrupt_control_bit(&self) {
         self.rirbctl.clear_bit(2);
     }
 
@@ -855,7 +855,7 @@ impl Controller {
 
     // ########## RIRBSIZE ##########
 
-    pub fn rirb_size_capability(&self) -> RingbufferCapability {
+     fn rirb_size_capability(&self) -> RingbufferCapability {
         RingbufferCapability::new(
             self.rirbsize.assert_bit(4),
             self.rirbsize.assert_bit(5),
@@ -888,38 +888,70 @@ impl Controller {
         self.dpibubase.write(ubase);
     }
 
-    pub fn init_dma_position_buffer(&self) {
+     pub fn init_dma_position_buffer(&self) {
         let dmapib_frame_range = alloc_no_cache_dma_memory(1);
 
         self.set_dma_position_buffer_address(dmapib_frame_range.start);
         self.enable_dma_position_buffer();
     }
 
-    pub fn stream_descriptor_position_in_current_buffer(&self, stream_descriptor_number: u32) -> u32 {
+     fn stream_descriptor_position_in_current_buffer(&self, stream_descriptor_number: u32) -> u32 {
         // see specification section 3.6.1
-        let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE_IN_BYTES * 2);
-        // debug!("address: {:#x}", address);
+        let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * (2 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE_IN_BYTES));
         unsafe { (address as *mut u32).read() }
     }
 
-    
-    
-    // _TODO_: review the following functions until end of impl block and use functions above instead of direct reads and writes
+    // ########## ICOI ##########
 
-
-
-    fn immediate_command(&self, command: &Command) -> Response {
-        self.icis.write(0b10);
+    fn write_command_to_immediate_command_output_interface(&self, command: Command) {
         self.icoi.write(command.as_u32());
-        self.icis.write(0b1);
+    }
+
+    // ########## ICII ##########
+
+    fn read_response_from_immediate_command_input_interface(&self) -> u32 {
+        self.icii.read()
+    }
+
+    // ########## ICIS ##########
+
+    fn assert_immediate_command_busy_bit(&self) -> bool {
+        self.icis.assert_bit(0)
+    }
+
+    fn set_immediate_command_busy_bit(&self) {
+        self.icis.set_bit(0);
+    }
+
+    fn clear_immediate_command_busy_bit(&self) {
+        self.icis.clear_bit(0);
+    }
+
+    fn assert_immediate_result_valid_bit(&self) -> bool {
+        self.icis.assert_bit(1)
+    }
+
+    fn set_immediate_result_ready_bit(&self) {
+        self.icis.set_bit(1);
+    }
+
+    // bit gets cleared by writing a 1 to it (see specification, section 3.4.3)
+    fn clear_immediate_result_ready_bit(&self) {
+        self.icis.set_bit(1);
+    }
+
+
+    fn immediate_command(&self, command: Command) -> Response {
+        self.write_command_to_immediate_command_output_interface(command);
+        self.set_immediate_command_busy_bit();
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        while (self.icis.read() & 0b10) != 0b10 {
+        while !self.assert_immediate_result_valid_bit() {
             if timer().read().systime_ms() > start_timer + IMMEDIATE_COMMAND_TIMEOUT_IN_MS {
                 panic!("IHDA immediate command timed out")
             }
         }
-        Response::from_raw_response(RawResponse::new(self.icii().read(), command.clone()))
+        Response::from_raw_response(RawResponse::new(self.read_response_from_immediate_command_input_interface(), command))
     }
 
     pub fn setup_ihda_config_space(&self) {
@@ -953,10 +985,8 @@ impl Controller {
         self.reset_corb_write_pointer();
         self.reset_corb_read_pointer();
     }
-    
+
     pub fn init_rirb(&self) {
-        // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
-        self.rirbctl.clear_all_bits();
         self.stop_rirb_dma();
         self.clear_response_interrupt_control_bit();
         self.clear_response_overrun_interrupt_control_bit();
@@ -999,7 +1029,7 @@ impl Controller {
         unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
         // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
 
-        debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(&GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
+        debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
 
         self.corbwp().write(self.corbwp.read() + 1);
         Timer::wait(200);
@@ -1025,8 +1055,8 @@ impl Controller {
         for codec_address in 0..MAX_AMOUNT_OF_CODECS {
             if self.wakests().assert_bit(codec_address) {
                 let root_node_addr = NodeAddress::new(codec_address, 0);
-                let vendor_id = VendorIdResponse::try_from(self.immediate_command(&GetParameter(root_node_addr, VendorId))).unwrap();
-                let revision_id = RevisionIdResponse::try_from(self.immediate_command(&GetParameter(root_node_addr, RevisionId))).unwrap();
+                let vendor_id = VendorIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, VendorId))).unwrap();
+                let revision_id = RevisionIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, RevisionId))).unwrap();
 
                 let function_groups = self.scan_codec_for_available_function_groups(root_node_addr);
 
@@ -1039,17 +1069,17 @@ impl Controller {
     fn scan_codec_for_available_function_groups(&self, root_node_addr: NodeAddress) -> Vec<FunctionGroup> {
         let mut function_groups: Vec<FunctionGroup> = Vec::new();
 
-        let subordinate_node_count = SubordinateNodeCountResponse::try_from(self.immediate_command(&GetParameter(root_node_addr, SubordinateNodeCount))).unwrap();
+        let subordinate_node_count = SubordinateNodeCountResponse::try_from(self.immediate_command(GetParameter(root_node_addr, SubordinateNodeCount))).unwrap();
         for node_id in *subordinate_node_count.starting_node_number()..(*subordinate_node_count.starting_node_number() + *subordinate_node_count.total_number_of_nodes()) {
             let function_group_node_address = NodeAddress::new(*root_node_addr.codec_address(), node_id);
-            let function_group_type = FunctionGroupTypeResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, FunctionGroupType))).unwrap();
-            let audio_function_group_caps = AudioFunctionGroupCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, AudioFunctionGroupCapabilities))).unwrap();
-            let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, SampleSizeRateCAPs))).unwrap();
-            let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, SupportedStreamFormats))).unwrap();
-            let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, InputAmpCapabilities))).unwrap();
-            let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, OutputAmpCapabilities))).unwrap();
-            let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, SupportedPowerStates))).unwrap();
-            let gpio_count = GPIOCountResponse::try_from(self.immediate_command(&GetParameter(function_group_node_address, GPIOCount))).unwrap();
+            let function_group_type = FunctionGroupTypeResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, FunctionGroupType))).unwrap();
+            let audio_function_group_caps = AudioFunctionGroupCapabilitiesResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, AudioFunctionGroupCapabilities))).unwrap();
+            let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, SampleSizeRateCAPs))).unwrap();
+            let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, SupportedStreamFormats))).unwrap();
+            let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, InputAmpCapabilities))).unwrap();
+            let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, OutputAmpCapabilities))).unwrap();
+            let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, SupportedPowerStates))).unwrap();
+            let gpio_count = GPIOCountResponse::try_from(self.immediate_command(GetParameter(function_group_node_address, GPIOCount))).unwrap();
 
             let widgets = self.scan_function_group_for_available_widgets(function_group_node_address);
 
@@ -1071,19 +1101,19 @@ impl Controller {
     fn scan_function_group_for_available_widgets(&self, fg_address: NodeAddress) -> Vec<Widget> {
         let mut widgets: Vec<Widget> = Vec::new();
 
-        let subordinate_node_count = SubordinateNodeCountResponse::try_from(self.immediate_command(&GetParameter(fg_address, SubordinateNodeCount))).unwrap();
+        let subordinate_node_count = SubordinateNodeCountResponse::try_from(self.immediate_command(GetParameter(fg_address, SubordinateNodeCount))).unwrap();
         for node_id in *subordinate_node_count.starting_node_number()..(*subordinate_node_count.starting_node_number() + *subordinate_node_count.total_number_of_nodes()) {
             let widget_address = NodeAddress::new(*fg_address.codec_address(), node_id);
             let widget_info: WidgetInfoContainer;
-            let audio_widget_capabilities_info = AudioWidgetCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, AudioWidgetCapabilities))).unwrap();
+            let audio_widget_capabilities_info = AudioWidgetCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, AudioWidgetCapabilities))).unwrap();
 
             match audio_widget_capabilities_info.widget_type() {
                 WidgetType::AudioOutput => {
-                    let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(&GetParameter(widget_address, SampleSizeRateCAPs))).unwrap();
-                    let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedStreamFormats))).unwrap();
-                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, ProcessingCapabilities))).unwrap();
+                    let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(GetParameter(widget_address, SampleSizeRateCAPs))).unwrap();
+                    let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedStreamFormats))).unwrap();
+                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
+                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
                     widget_info = WidgetInfoContainer::AudioOutputConverter(
                         sample_size_rate_caps,
                         supported_stream_formats,
@@ -1093,12 +1123,12 @@ impl Controller {
                     );
                 }
                 WidgetType::AudioInput => {
-                    let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(&GetParameter(widget_address, SampleSizeRateCAPs))).unwrap();
-                    let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedStreamFormats))).unwrap();
-                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, InputAmpCapabilities))).unwrap();
-                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(&GetParameter(widget_address, ConnectionListLength))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, ProcessingCapabilities))).unwrap();
+                    let sample_size_rate_caps = SampleSizeRateCAPsResponse::try_from(self.immediate_command(GetParameter(widget_address, SampleSizeRateCAPs))).unwrap();
+                    let supported_stream_formats = SupportedStreamFormatsResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedStreamFormats))).unwrap();
+                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, InputAmpCapabilities))).unwrap();
+                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(GetParameter(widget_address, ConnectionListLength))).unwrap();
+                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
                     widget_info = WidgetInfoContainer::AudioInputConverter(
                         sample_size_rate_caps,
                         supported_stream_formats,
@@ -1109,11 +1139,11 @@ impl Controller {
                     );
                 }
                 WidgetType::AudioMixer => {
-                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, InputAmpCapabilities))).unwrap();
-                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
-                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(&GetParameter(widget_address, ConnectionListLength))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, ProcessingCapabilities))).unwrap();
+                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, InputAmpCapabilities))).unwrap();
+                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
+                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(GetParameter(widget_address, ConnectionListLength))).unwrap();
+                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
                     widget_info = WidgetInfoContainer::Mixer(
                         input_amp_caps,
                         output_amp_caps,
@@ -1127,14 +1157,14 @@ impl Controller {
                 }
 
                 WidgetType::PinComplex => {
-                    let pin_caps = PinCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, PinCapabilities))).unwrap();
-                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, InputAmpCapabilities))).unwrap();
-                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
-                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(&GetParameter(widget_address, ConnectionListLength))).unwrap();
-                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(&GetParameter(widget_address, SupportedPowerStates))).unwrap();
-                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(&GetParameter(widget_address, ProcessingCapabilities))).unwrap();
-                    let configuration_default = ConfigurationDefaultResponse::try_from(self.immediate_command(&GetConfigurationDefault(widget_address))).unwrap();
-                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(self.immediate_command(&GetConnectionListEntry(widget_address, GetConnectionListEntryPayload::new(0)))).unwrap();
+                    let pin_caps = PinCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, PinCapabilities))).unwrap();
+                    let input_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, InputAmpCapabilities))).unwrap();
+                    let output_amp_caps = AmpCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, OutputAmpCapabilities))).unwrap();
+                    let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(GetParameter(widget_address, ConnectionListLength))).unwrap();
+                    let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
+                    let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
+                    let configuration_default = ConfigurationDefaultResponse::try_from(self.immediate_command(GetConfigurationDefault(widget_address))).unwrap();
+                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(widget_address, GetConnectionListEntryPayload::new(0)))).unwrap();
                     widget_info = WidgetInfoContainer::PinComplex(
                         pin_caps,
                         input_amp_caps,
@@ -1169,12 +1199,12 @@ impl Controller {
         // ########## configure codec ##########
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        self.immediate_command(&SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
+        self.immediate_command(SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
         // activate input and output for pin widget
-        let pin_widget_control = PinWidgetControlResponse::try_from(self.immediate_command(&GetPinWidgetControl(*pin_widget.address()))).unwrap();
+        let pin_widget_control = PinWidgetControlResponse::try_from(self.immediate_command(GetPinWidgetControl(*pin_widget.address()))).unwrap();
         /* after the following command, plugging headphones in and out the jack should make an audible noise */
-        self.immediate_command(&SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::new(
+        self.immediate_command(SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::new(
             match pin_widget_control.voltage_reference_enable() {
                 VoltageReferenceSignalLevel::HiZ => VoltageReferenceSignalLevel::HiZ,
                 VoltageReferenceSignalLevel::FiftyPercent => VoltageReferenceSignalLevel::FiftyPercent,
@@ -1187,7 +1217,7 @@ impl Controller {
             *pin_widget_control.h_phn_enable()
         )));
 
-        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(self.immediate_command(&GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
+        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
         // debug!("connection list entries pin widget: {:?}", connection_list_entries_pin);
 
 
@@ -1199,21 +1229,21 @@ impl Controller {
 
 
         // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        self.immediate_command(&SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
+        self.immediate_command(SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
 
-        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(self.immediate_command(&GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
+        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
         let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer1.connection_list_entry_at_offset_index());
 
         // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
         // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
         // default gain value is 87
-        self.immediate_command(&SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
+        self.immediate_command(SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
 
         // set stream id
-        self.immediate_command(&SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
+        self.immediate_command(SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
 
         // set stream format
-        self.immediate_command(&SetStreamFormat(audio_out_widget, stream_format.clone()));
+        self.immediate_command(SetStreamFormat(audio_out_widget, stream_format.clone()));
     }
 }
 
