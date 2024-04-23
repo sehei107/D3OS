@@ -697,17 +697,13 @@ impl Controller {
         let start_timer = timer().read().systime_ms();
         // value for CORBRPRST_TIMEOUT arbitrarily chosen
         
-        while self.corbrp().read() != 0x0 {
+        while !self.corbrp.assert_bit(15) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("CORB read pointer reset timed out")
             }
         }
-        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
-        // actually you are supposed to read a 1 back from bit 15
-        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
-        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
-        // this is why the code now just checks if the register contains the value 0 after the reset
-        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
+
+        self.corbrp.clear_bit(15);
     }
 
     // ########## CORBCTL ##########
@@ -954,33 +950,10 @@ impl Controller {
             }
         }
 
-        // the following call leads to panic in QEMU because of timeout, but it seems to work on real hardware without a reset...
-        // IHDA::reset_corb(crs);
-    }
-
-    pub fn reset_corb(&self) {
-        self.stop_corb_dma();
         self.reset_corb_write_pointer();
         self.reset_corb_read_pointer();
-
-        let start_timer = timer().read().systime_ms();
-        // value for CORBRPRST_TIMEOUT arbitrarily chosen
-        const CORBRPRST_TIMEOUT: usize = 10000;
-        while self.corbrp.read() != 0x0 {
-            if timer().read().systime_ms() > start_timer + CORBRPRST_TIMEOUT {
-                panic!("CORB read pointer reset timed out")
-            }
-        }
-        // on my testing device with a physical IHDA sound card, the CORBRP reset doesn't work like described in the specification (section 3.3.21)
-        // actually you are supposed to read a 1 back from bit 15
-        // but the physical sound card never wrote a 1 back to the CORBRPRST bit so that the code always panicked with "CORB read pointer reset timed out"
-        // on the other hand, setting the CORBRPRST bit successfully set the CORBRP register back to 0
-        // this is why the code now just checks if the register contains the value 0 after the reset
-        // it is still to figure out if the controller really clears "any residual pre-fetched commands in the CORB hardware buffer within the controller" (section 3.3.21)
     }
-
-
-
+    
     pub fn init_rirb(&self) {
         // disable RIRB response overrun interrupt control (RIRBOIC), RIRB DMA engine (RIRBDMAEN) and RIRB response interrupt control (RINTCTL)
         self.rirbctl.clear_all_bits();
