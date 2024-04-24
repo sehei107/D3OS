@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
-use core::arch::asm;
 use core::fmt::LowerHex;
 use core::ptr::NonNull;
 use log::debug;
@@ -14,7 +13,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, WidgetInfoContainer, Widget, WidgetType, StreamFormat};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, WidgetInfoContainer, Widget, WidgetType, StreamFormat};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::memory::PAGE_SIZE;
@@ -783,6 +782,32 @@ impl Controller {
         )
     }
 
+    pub fn init_corb(&self) {
+        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
+        self.clear_corb_memory_error_interrupt_enable_bit();
+        self.stop_corb_dma();
+
+        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
+        assert_eq!(self.corb_size_in_entries(), CorbSize::TwoHundredFiftySixEntries);
+
+        // setup MMIO space for Command Outbound Ring Buffer – CORB
+        let corb_frame_range = memory::physical::alloc(2);
+        match corb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                self.set_corb_address(start);
+            }
+        }
+
+        self.reset_corb_write_pointer();
+        self.reset_corb_read_pointer();
+    }
+
+    pub fn start_corb(&self) {
+        // set CORBRUN and CMEIE bits
+        self.set_controller_interrupt_enable_bit();
+        self.start_corb_dma();
+    }
+
     // ########## RIRBLBASE and RIRBUBASE ##########
 
      fn set_rirb_address(&self, start_frame: PhysFrame) {
@@ -864,6 +889,58 @@ impl Controller {
         )
     }
 
+    pub fn init_rirb(&self) {
+        self.stop_rirb_dma();
+        self.clear_response_interrupt_control_bit();
+        self.clear_response_overrun_interrupt_control_bit();
+
+        // setup MMIO space for Response Inbound Ring Buffer – RIRB
+        let rirb_frame_range = memory::physical::alloc(4);
+        match rirb_frame_range {
+            PhysFrameRange { start, end: _ } => {
+                self.set_rirb_address(start);
+            }
+        }
+
+        self.reset_rirb_write_pointer();
+    }
+
+    pub fn start_rirb(&self) {
+        self.set_response_interrupt_control_bit();
+        self.set_response_overrun_interrupt_control_bit();
+        self.start_rirb_dma();
+
+        // CORB/RIRB demo
+
+        Timer::wait(1000);
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        self.corbwp.dump();
+        self.corbrp.dump();
+        self.rirbwp.dump();
+
+        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
+        // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
+
+        // debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
+
+        self.corbwp().write(self.corbwp.read() + 1);
+        Timer::wait(200);
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        self.corbwp.dump();
+        self.corbrp.dump();
+        self.rirbwp.dump();
+
+
+        debug!("CORB address: {:#x}", self.corb_address());
+        debug!("RIRB address: {:#x}", self.rirb_address());
+    }
+
     // ########## DPLBASE and DPUBASE ##########
 
     fn enable_dma_position_buffer(&self) {
@@ -941,7 +1018,6 @@ impl Controller {
         self.icis.set_bit(1);
     }
 
-
     fn immediate_command(&self, command: Command) -> Response {
         self.write_command_to_immediate_command_output_interface(command);
         self.set_immediate_command_busy_bit();
@@ -964,84 +1040,6 @@ impl Controller {
 
         // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
         self.wakeen.set_all_bits();
-    }
-
-    pub fn init_corb(&self) {
-        // disable CORB DMA engine (CORBRUN) and CORB memory error interrupt (CMEIE)
-        self.clear_corb_memory_error_interrupt_enable_bit();
-        self.stop_corb_dma();
-
-        // verify that CORB size is 1KB (IHDA specification, section 3.3.24: "There is no requirement to support more than one CORB Size.")
-        assert_eq!(self.corb_size_in_entries(), CorbSize::TwoHundredFiftySixEntries);
-
-        // setup MMIO space for Command Outbound Ring Buffer – CORB
-        let corb_frame_range = memory::physical::alloc(2);
-        match corb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                self.set_corb_address(start);
-            }
-        }
-
-        self.reset_corb_write_pointer();
-        self.reset_corb_read_pointer();
-    }
-
-    pub fn init_rirb(&self) {
-        self.stop_rirb_dma();
-        self.clear_response_interrupt_control_bit();
-        self.clear_response_overrun_interrupt_control_bit();
-
-        // setup MMIO space for Response Inbound Ring Buffer – RIRB
-        let rirb_frame_range = memory::physical::alloc(4);
-        match rirb_frame_range {
-            PhysFrameRange { start, end: _ } => {
-                self.set_rirb_address(start);
-            }
-        }
-
-        self.reset_rirb_write_pointer();
-    }
-
-    pub fn start_corb(&self) {
-        // set CORBRUN and CMEIE bits
-        self.set_controller_interrupt_enable_bit();
-        self.start_corb_dma();
-    }
-
-    pub fn start_rirb(&self) {
-        self.set_response_interrupt_control_bit();
-        self.set_response_overrun_interrupt_control_bit();
-        self.start_rirb_dma();
-
-        // CORB/RIRB demo
-
-        Timer::wait(1000);
-        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        self.corbwp.dump();
-        self.corbrp.dump();
-        self.rirbwp.dump();
-
-        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
-        // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
-
-        // debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
-
-        self.corbwp().write(self.corbwp.read() + 1);
-        Timer::wait(200);
-        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        self.corbwp.dump();
-        self.corbrp.dump();
-        self.rirbwp.dump();
-
-
-        debug!("CORB address: {:#x}", self.corb_address());
-        debug!("RIRB address: {:#x}", self.rirb_address());
     }
 
     // check the bitmask from bits 0 to 14 of the WAKESTS (in the specification also called STATESTS) indicating available codecs
@@ -1141,12 +1139,14 @@ impl Controller {
                     let connection_list_length = ConnectionListLengthResponse::try_from(self.immediate_command(GetParameter(widget_address, ConnectionListLength))).unwrap();
                     let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
+                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(widget_address, GetConnectionListEntryPayload::new(0)))).unwrap();
                     widget_info = WidgetInfoContainer::Mixer(
                         input_amp_caps,
                         output_amp_caps,
                         connection_list_length,
                         supported_power_states,
-                        processing_capabilities
+                        processing_capabilities,
+                        first_connection_list_entries,
                     );
                 }
                 WidgetType::AudioSelector => {
@@ -1161,6 +1161,7 @@ impl Controller {
                     let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
                     let configuration_default = ConfigurationDefaultResponse::try_from(self.immediate_command(GetConfigurationDefault(widget_address))).unwrap();
+                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(widget_address, GetConnectionListEntryPayload::new(0)))).unwrap();
                     widget_info = WidgetInfoContainer::PinComplex(
                         pin_caps,
                         input_amp_caps,
@@ -1169,6 +1170,7 @@ impl Controller {
                         supported_power_states,
                         processing_capabilities,
                         configuration_default,
+                        first_connection_list_entries,
                     );
                 }
                 WidgetType::PowerWidget => {
@@ -1202,56 +1204,49 @@ impl Controller {
         Stream::new(self.output_stream_descriptors().get(output_sound_descriptor_number).unwrap(), stream_format, buffer_amount, pages_per_buffer, stream_id)
     }
 
-    pub fn configure_codec(&self, codec: &Codec, stream: &Stream) {
-        let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
-        let pin_widget = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
+    fn configure_widget_for_line_out_playback(&self, widget: &Widget, stream: &Stream) {
+        match widget.audio_widget_capabilities().widget_type() {
+            WidgetType::AudioOutput => {
+                // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
+                // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
+                // default gain value is 87
+                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
 
-        // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        self.immediate_command(SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
+                // set stream id
+                // channel number for now hard coded to 0
+                self.immediate_command(SetChannelStreamId(*widget.address(), SetChannelStreamIdPayload::new(0, *stream.id())));
 
-        // activate input and output for pin widget
-        let pin_widget_control_response = PinWidgetControlResponse::try_from(self.immediate_command(GetPinWidgetControl(*pin_widget.address()))).unwrap();
-        /* after the following command, plugging headphones in and out the jack should make an audible noise */
-        self.immediate_command(SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::enable_input_and_output_amps(pin_widget_control_response)));
+                // set stream format
+                self.immediate_command(SetStreamFormat(*widget.address(), SetStreamFormatPayload::new(*stream.stream_format())));
+            }
+            WidgetType::AudioInput => {}
+            WidgetType::AudioMixer => {
+                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
+            }
+            WidgetType::AudioSelector => {}
+            WidgetType::PinComplex => {
+                // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
+                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
-        let connection_list_entries_pin = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
-        // debug!("connection list entries pin widget: {:?}", connection_list_entries_pin);
-
-
-        let mixer_widget = NodeAddress::new(0, *connection_list_entries_pin.first_entry());
-        // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
-        self.immediate_command(SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
-
-        let connection_list_entries_mixer = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
-        let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer.first_entry());
-
-        // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
-        // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
-        // default gain value is 87
-        self.immediate_command(SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
-
-        // set stream id
-        // channel number for now hard coded to 0
-        self.immediate_command(SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(0, *stream.id())));
-
-        // set stream format
-        self.immediate_command(SetStreamFormat(audio_out_widget, SetStreamFormatPayload::new(*stream.stream_format())));
+                // activate input and output for pin widget
+                let pin_widget_control_response = PinWidgetControlResponse::try_from(self.immediate_command(GetPinWidgetControl(*widget.address()))).unwrap();
+                /* after the following command, plugging headphones in and out the jack should make an audible noise */
+                self.immediate_command(SetPinWidgetControl(*widget.address(), SetPinWidgetControlPayload::enable_input_and_output_amps(pin_widget_control_response)));
+            }
+            WidgetType::PowerWidget => {}
+            WidgetType::VolumeKnobWidget => {}
+            WidgetType::BeepGeneratorWidget => {}
+            WidgetType::VendorDefinedAudioWidget => {}
+        }
     }
 
-    // pub fn configure_pin_widget(pin_widget: &Widget) {
-    //     match widget.audio_widget_capabilities().widget_type() {
-    //         WidgetType::AudioOutput => {}
-    //         WidgetType::AudioInput => {}
-    //         WidgetType::AudioMixer => {}
-    //         WidgetType::AudioSelector => {}
-    //         WidgetType::PinComplex => {}
-    //         WidgetType::PowerWidget => {}
-    //         WidgetType::VolumeKnobWidget => {}
-    //         WidgetType::BeepGeneratorWidget => {}
-    //         WidgetType::VendorDefinedAudioWidget => {}
-    //     }
-    //
-    // }
+    pub fn configure_codec_for_line_out_playback(&self, codec: &Codec, stream: &Stream) {
+        let widgets_on_output_path = codec.function_groups().get(0).unwrap().find_widget_path_for_line_out_playback();
+
+        for widget in widgets_on_output_path {
+            self.configure_widget_for_line_out_playback(widget, stream);
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

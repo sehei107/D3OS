@@ -71,7 +71,7 @@ impl IHDA {
 
         // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
         let codec = codecs.get(0).unwrap();
-        controller.configure_codec(codec, stream);
+        controller.configure_codec_for_line_out_playback(codec, stream);
 
         // ########## write data to buffers ##########
 

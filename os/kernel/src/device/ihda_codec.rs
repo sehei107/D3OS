@@ -94,7 +94,7 @@ impl FunctionGroup {
             match widget.audio_widget_capabilities().widget_type() {
                 WidgetType::PinComplex => {
                     let config_defaults = match widget.widget_info() {
-                        WidgetInfoContainer::PinComplex(_, _, _, _, _, _, config_default) => {
+                        WidgetInfoContainer::PinComplex(_, _, _, _, _, _, config_default, _) => {
                             config_default
                         }
                         _ => {
@@ -118,6 +118,41 @@ impl FunctionGroup {
         }
 
         pin_widgets_connected_to_jack
+    }
+
+    pub fn get_predecessor(&self, widget: &Widget) -> Option<&Widget> {
+        let connection_list_entries = match widget.widget_info() {
+            WidgetInfoContainer::AudioOutputConverter(_, _, _, _, _) => { None }
+            WidgetInfoContainer::AudioInputConverter(_, _, _, _, _, _) => { None }
+            WidgetInfoContainer::PinComplex(_, _, _, _, _, _, _, connection_list_entries) => { Some(connection_list_entries) }
+            WidgetInfoContainer::Mixer(_, _, _, _, _, connection_list_entries) => { Some(connection_list_entries) }
+            WidgetInfoContainer::Selector => { None }
+            WidgetInfoContainer::Power => { None }
+            WidgetInfoContainer::VolumeKnob => { None }
+            WidgetInfoContainer::BeepGenerator => { None }
+            WidgetInfoContainer::VendorDefined => { None }
+        };
+
+        if connection_list_entries.is_some() {
+            let default_predecessor_node_id = *connection_list_entries.unwrap().first_entry();
+            for widget in self.widgets().iter() {
+                if *widget.address().node_id() == default_predecessor_node_id {
+                    return Some(widget);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn find_widget_path_for_line_out_playback(&self) -> Vec<&Widget> {
+        let mut widgets_on_path = Vec::new();
+        let mut widget = Some(*self.find_line_out_pin_widgets_connected_to_jack().get(0).unwrap());
+        while widget.is_some() {
+            widgets_on_path.push(widget.unwrap());
+            widget = self.get_predecessor(widget.unwrap());
+        }
+        widgets_on_path
     }
 }
 
@@ -169,6 +204,7 @@ pub enum WidgetInfoContainer {
         SupportedPowerStatesResponse,
         ProcessingCapabilitiesResponse,
         ConfigurationDefaultResponse,
+        ConnectionListEntryResponse,
     ),
     Mixer(
         AmpCapabilitiesResponse,
@@ -176,6 +212,7 @@ pub enum WidgetInfoContainer {
         ConnectionListLengthResponse,
         SupportedPowerStatesResponse,
         ProcessingCapabilitiesResponse,
+        ConnectionListEntryResponse,
     ),
     Selector,
     Power,
