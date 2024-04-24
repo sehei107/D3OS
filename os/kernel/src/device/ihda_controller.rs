@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
+use core::arch::asm;
 use core::fmt::LowerHex;
 use core::ptr::NonNull;
 use log::debug;
@@ -13,7 +14,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, WidgetInfoContainer, Widget, WidgetType};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, StreamFormatResponse, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, VoltageReferenceSignalLevel, WidgetInfoContainer, Widget, WidgetType, StreamFormat};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::memory::PAGE_SIZE;
@@ -310,8 +311,8 @@ impl StreamDescriptorRegisters {
         StreamFormatResponse::new(self.sdfmt.read() as u32)
     }
 
-    pub fn set_stream_format(&self, set_stream_format_payload: SetStreamFormatPayload) {
-        self.sdfmt.write(set_stream_format_payload.as_u16());
+    pub fn set_stream_format(&self, stream_format: StreamFormat) {
+        self.sdfmt.write(stream_format.as_u16());
     }
 
     // ########## SDBDPL and SDBDPU ##########
@@ -542,15 +543,15 @@ impl Controller {
 
     // fn initiate_flush();
 
-    fn assert_unsol_bit(&self) -> bool {
+    fn assert_unsolicited_response_enable_bit(&self) -> bool {
         self.gctl.assert_bit(8)
     }
 
-    fn set_unsol_bit(&self) {
+    fn set_unsolicited_response_enable_bit(&self) {
         self.gctl.set_bit(8);
     }
 
-    fn clear_unsol_bit(&self) {
+    fn clear_unsolicited_response_enable_bit(&self) {
         self.gctl.clear_bit(8);
     }
 
@@ -956,11 +957,10 @@ impl Controller {
 
     pub fn setup_ihda_config_space(&self) {
         // set Accept Unsolicited Response Enable (UNSOL) bit
-        self.gctl.set_bit(8);
+        self.clear_unsolicited_response_enable_bit();
 
-        // set global interrupt enable (GIE) and controller interrupt enable (CIE) bits
-        self.intctl.set_bit(30);
-        self.intctl.set_bit(31);
+        self.set_global_interrupt_enable_bit();
+        self.set_controller_interrupt_enable_bit();
 
         // enable wake events and interrupts for all SDIN (actually, only one bit needs to be set, but this works for now...)
         self.wakeen.set_all_bits();
@@ -1000,8 +1000,6 @@ impl Controller {
         }
 
         self.reset_rirb_write_pointer();
-        // self.rirbwp.dump();
-        // Timer::wait(2000);
     }
 
     pub fn start_corb(&self) {
@@ -1029,7 +1027,7 @@ impl Controller {
         unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
         // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
 
-        debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
+        // debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
 
         self.corbwp().write(self.corbwp.read() + 1);
         Timer::wait(200);
@@ -1040,7 +1038,6 @@ impl Controller {
         self.corbwp.dump();
         self.corbrp.dump();
         self.rirbwp.dump();
-        Timer::wait(20000);
 
 
         debug!("CORB address: {:#x}", self.corb_address());
@@ -1164,7 +1161,6 @@ impl Controller {
                     let supported_power_states = SupportedPowerStatesResponse::try_from(self.immediate_command(GetParameter(widget_address, SupportedPowerStates))).unwrap();
                     let processing_capabilities = ProcessingCapabilitiesResponse::try_from(self.immediate_command(GetParameter(widget_address, ProcessingCapabilities))).unwrap();
                     let configuration_default = ConfigurationDefaultResponse::try_from(self.immediate_command(GetConfigurationDefault(widget_address))).unwrap();
-                    let first_connection_list_entries = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(widget_address, GetConnectionListEntryPayload::new(0)))).unwrap();
                     widget_info = WidgetInfoContainer::PinComplex(
                         pin_caps,
                         input_amp_caps,
@@ -1173,7 +1169,6 @@ impl Controller {
                         supported_power_states,
                         processing_capabilities,
                         configuration_default,
-                        first_connection_list_entries
                     );
                 }
                 WidgetType::PowerWidget => {
@@ -1195,7 +1190,59 @@ impl Controller {
         widgets
     }
 
-    pub fn configure_codec(&self, pin_widget: &Widget, connection_list_entry: usize, stream_format: SetStreamFormatPayload, stream_id: u8, channel: u8) {
+    pub fn allocate_output_stream(
+        &self,
+        output_sound_descriptor_number: usize,
+        stream_format: StreamFormat,
+        buffer_amount: u32,
+        pages_per_buffer: u32,
+        stream_id: u8
+    ) -> Stream {
+
+        Stream::new(self.output_stream_descriptors().get(output_sound_descriptor_number).unwrap(), stream_format, buffer_amount, pages_per_buffer, stream_id)
+    }
+
+    pub fn configure_codec_for_default_stereo_output(&self, codec: &Codec, stream: &Stream) {
+        let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
+        let pin_widget = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
+
+        // ########## determine appropriate stream parameters ##########
+        // let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
+        //
+        // // default stereo, 48kHz, 24 Bit stream format can be read from audio output converter widget (which gets declared further below)
+        // // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget))).unwrap());
+        //
+        // let stream_id = 1;
+        // let stream = Stream::new(controller.output_stream_descriptors().get(0).unwrap(), stream_format, 2, 128, stream_id);
+        self.configure_codec(pin_widget, stream, 0, 0);
+
+        // ########## write data to buffers ##########
+
+        let mut saw = Vec::new();
+        for i in 0u32..32768 {
+            let sample = (i%512 * 128) as u16;
+            saw.push(sample);
+        }
+
+        stream.write_data_to_buffer(0, &saw);
+        stream.write_data_to_buffer(1, &saw);
+
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        unsafe { asm!("wbinvd"); }
+
+
+        // ########## start stream ##########
+
+        debug!("run in one second!");
+        Timer::wait(1000);
+        stream.run();
+
+        Timer::wait(600000);
+    }
+
+    pub fn configure_codec(&self, pin_widget: &Widget, stream: &Stream, connection_list_entry: usize, channel: u8) {
+        let stream_format = *stream.stream_format();
+        let stream_id = *stream.id();
         // ########## configure codec ##########
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
@@ -1243,7 +1290,7 @@ impl Controller {
         self.immediate_command(SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
 
         // set stream format
-        self.immediate_command(SetStreamFormat(audio_out_widget, stream_format.clone()));
+        self.immediate_command(SetStreamFormat(audio_out_widget, SetStreamFormatPayload::new(stream_format)));
     }
 }
 
@@ -1401,7 +1448,6 @@ pub struct CyclicBuffer {
 impl CyclicBuffer {
     pub fn new(buffer_amount: u32, pages_per_buffer: u32) -> Self {
         let buffer_frame_range = alloc_no_cache_dma_memory(buffer_amount * pages_per_buffer);
-        debug!("cyclic buffer start inclusive: {:#x}, cyclic buffer end exclusive: {:#x}", buffer_frame_range.start.start_address().as_u64(), buffer_frame_range.end.start_address().as_u64());
         let buffer_size_in_bits = pages_per_buffer * PAGE_SIZE as u32;
         let buffer_size_in_bytes = buffer_size_in_bits / 8;
         let start_address = buffer_frame_range.start.start_address().as_u64();
@@ -1429,16 +1475,18 @@ pub struct Stream<'a> {
     sd_registers: &'a StreamDescriptorRegisters,
     buffer_descriptor_list: BufferDescriptorList,
     cyclic_buffer: CyclicBuffer,
+    stream_format: StreamFormat,
+    id: u8,
 }
 
 impl<'a> Stream<'a> {
 
     pub fn new(
         sd_registers: &'a StreamDescriptorRegisters,
-        stream_format: SetStreamFormatPayload,
+        stream_format: StreamFormat,
         buffer_amount: u32,
         pages_per_buffer: u32,
-        stream_id: u8
+        id: u8
     ) -> Self {
         // ########## allocate data buffers and bdl ##########
 
@@ -1464,10 +1512,10 @@ impl<'a> Stream<'a> {
 
         sd_registers.set_last_valid_index(*bdl.last_valid_index());
 
-        sd_registers.set_stream_format(stream_format.clone());
+        sd_registers.set_stream_format(stream_format);
         // sd_registers.set_stream_format(SetStreamFormatPayload::from_response(stream_format));
 
-        sd_registers.set_stream_id(stream_id);
+        sd_registers.set_stream_id(id);
 
         // sd_registers.set_interrupt_on_completion_enable_bit();
         // sd_registers.set_fifo_error_interrupt_enable_bit();
@@ -1477,6 +1525,8 @@ impl<'a> Stream<'a> {
             sd_registers,
             buffer_descriptor_list: bdl,
             cyclic_buffer,
+            stream_format,
+            id,
         }
     }
 

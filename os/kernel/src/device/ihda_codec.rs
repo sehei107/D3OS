@@ -94,7 +94,7 @@ impl FunctionGroup {
             match widget.audio_widget_capabilities().widget_type() {
                 WidgetType::PinComplex => {
                     let config_defaults = match widget.widget_info() {
-                        WidgetInfoContainer::PinComplex(_, _, _, _, _, _, config_default, _) => {
+                        WidgetInfoContainer::PinComplex(_, _, _, _, _, _, config_default) => {
                             config_default
                         }
                         _ => {
@@ -169,7 +169,6 @@ pub enum WidgetInfoContainer {
         SupportedPowerStatesResponse,
         ProcessingCapabilitiesResponse,
         ConfigurationDefaultResponse,
-        ConnectionListEntryResponse,
     ),
     Mixer(
         AmpCapabilitiesResponse,
@@ -440,7 +439,7 @@ pub enum SetAmplifierGainMuteSide {
 }
 
 #[derive(Clone, Copy, Debug, Getters)]
-pub struct SetStreamFormatPayload {
+pub struct StreamFormat {
     number_of_channels: u8,
     bits_per_sample: BitsPerSample,
     sample_base_rate_divisor: u8,
@@ -449,7 +448,7 @@ pub struct SetStreamFormatPayload {
     stream_type: StreamType,
 }
 
-impl SetStreamFormatPayload {
+impl StreamFormat {
     pub fn new(
         number_of_channels: u8,
         bits_per_sample: BitsPerSample,
@@ -492,24 +491,42 @@ impl SetStreamFormatPayload {
             | number_of_channels as u16
     }
 
-    pub fn from_response(stream_format: StreamFormatResponse) -> Self {
+    pub fn from_response(response: StreamFormatResponse) -> Self {
         Self {
-            number_of_channels: *stream_format.number_of_channels(),
-            bits_per_sample: match stream_format.bits_per_sample() {
+            number_of_channels: *response.stream_format().number_of_channels(),
+            bits_per_sample: match response.stream_format().bits_per_sample() {
                 BitsPerSample::Eight => BitsPerSample::Eight,
                 BitsPerSample::Sixteen => BitsPerSample::Sixteen,
                 BitsPerSample::Twenty => BitsPerSample::Twenty,
                 BitsPerSample::Twentyfour => BitsPerSample::Twentyfour,
                 BitsPerSample::Thirtytwo => BitsPerSample::Thirtytwo,
             },
-            sample_base_rate_divisor: *stream_format.sample_base_rate_divisor(),
-            sample_base_rate_multiple: *stream_format.sample_base_rate_multiple(),
-            sample_base_rate: *stream_format.sample_base_rate(),
-            stream_type: match stream_format.stream_type() {
+            sample_base_rate_divisor: *response.stream_format().sample_base_rate_divisor(),
+            sample_base_rate_multiple: *response.stream_format().sample_base_rate_multiple(),
+            sample_base_rate: *response.stream_format().sample_base_rate(),
+            stream_type: match response.stream_format().stream_type() {
                 StreamType::PCM => StreamType::PCM,
                 StreamType::NonPCM => StreamType::NonPCM,
             },
         }
+    }
+}
+
+
+#[derive(Clone, Copy, Debug, Getters)]
+pub struct SetStreamFormatPayload {
+    stream_format: StreamFormat,
+}
+
+impl SetStreamFormatPayload {
+    pub fn new(stream_format: StreamFormat) -> Self {
+        Self {
+            stream_format
+        }
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.stream_format.as_u16()
     }
 }
 
@@ -1323,12 +1340,7 @@ impl TryFrom<Response> for AmplifierGainMuteResponse {
 
 #[derive(Debug, Getters)]
 pub struct StreamFormatResponse {
-    number_of_channels: u8,
-    bits_per_sample: BitsPerSample,
-    sample_base_rate_divisor: u8,
-    sample_base_rate_multiple: u8,
-    sample_base_rate: u16,
-    stream_type: StreamType,
+    stream_format: StreamFormat,
 }
 
 impl StreamFormatResponse {
@@ -1337,22 +1349,29 @@ impl StreamFormatResponse {
         if sample_base_rate_multiple > 4 {
             panic!("Unsupported sample rate base multiple, see table 53 in section 3.7.1: Stream Format Structure of the specification");
         }
+        let number_of_channels = (response.bitand(0xF) as u8) + 1;
+        let bits_per_sample = match (response >> 4).bitand(0b111) {
+            0b000 => BitsPerSample::Eight,
+            0b001 => BitsPerSample::Sixteen,
+            0b010 => BitsPerSample::Twenty,
+            0b011 => BitsPerSample::Twentyfour,
+            0b100 => BitsPerSample::Thirtytwo,
+            // 0b101 to 0b111 reserved
+            _ => panic!("Unsupported bit depth, see table 53 in section 3.7.1: Stream Format Structure of the specification")
+        };
+        let sample_base_rate_divisor = (response >> 8).bitand(0b111) as u8 + 1;
+        let sample_base_rate = if get_bit(response, 14) { 44100 } else { 48000 };
+        let stream_type = if get_bit(response, 15) { StreamType::NonPCM } else { StreamType::PCM };
 
         Self {
-            number_of_channels: (response.bitand(0xF) as u8) + 1,
-            bits_per_sample: match (response >> 4).bitand(0b111) {
-                0b000 => BitsPerSample::Eight,
-                0b001 => BitsPerSample::Sixteen,
-                0b010 => BitsPerSample::Twenty,
-                0b011 => BitsPerSample::Twentyfour,
-                0b100 => BitsPerSample::Thirtytwo,
-                // 0b101 to 0b111 reserved
-                _ => panic!("Unsupported bit depth, see table 53 in section 3.7.1: Stream Format Structure of the specification")
-            },
-            sample_base_rate_divisor: (response >> 8).bitand(0b111) as u8 + 1,
-            sample_base_rate_multiple,
-            sample_base_rate: if get_bit(response, 14) { 44100 } else { 48000 },
-            stream_type: if get_bit(response, 15) { StreamType::NonPCM } else { StreamType::PCM },
+            stream_format: StreamFormat::new(
+                number_of_channels,
+                bits_per_sample,
+                sample_base_rate_divisor,
+                sample_base_rate_multiple,
+                sample_base_rate,
+                stream_type
+            )
         }
     }
 }

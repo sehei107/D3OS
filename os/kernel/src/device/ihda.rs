@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
-use core::arch::asm;
 use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, EndpointHeader, SubClass};
@@ -11,10 +9,9 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
-use crate::device::ihda_controller::{Controller, Stream};
-use crate::device::ihda_codec::{BitsPerSample, Codec, SetStreamFormatPayload, StreamType, Widget};
+use crate::device::ihda_controller::{Controller};
+use crate::device::ihda_codec::{BitsPerSample, StreamFormat, StreamType};
 use crate::device::pci::PciBus;
-use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -55,6 +52,7 @@ impl IHDA {
 
         // interview sound card
         let codecs = controller.scan_for_available_codecs();
+        debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
         controller.init_corb();
         controller.init_rirb();
@@ -63,11 +61,16 @@ impl IHDA {
 
         info!("CORB and RIRB set up and running");
 
-        IHDA::prepare_default_stereo_output(&controller, &codecs.get(0).unwrap());
+        let stream_format = StreamFormat::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
+        let stream_id = 1;
+        let stream = &controller.allocate_output_stream(0, stream_format, 2, 128, stream_id);
 
-        debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
-        IHDA {}
+        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
+        let codec = codecs.get(0).unwrap();
+        controller.configure_codec_for_default_stereo_output(codec, stream);
+
+        Self {}
     }
 
     fn find_ihda_device(pci_bus: &PciBus) -> &EndpointHeader {
@@ -167,96 +170,31 @@ impl IHDA {
         A fake interrupt via the call of "unsafe { asm!("int 35"); }" will now result in a call of IHDAInterruptHandler's trigger() function.
         */
     }
-
-    fn prepare_default_stereo_output(register_interface: &Controller, codec: &Codec) {
-        let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
-        let default_output = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
-
-        Self::default_stereo_setup(default_output, register_interface);
-
-    }
-
-    fn default_stereo_setup(pin_widget: &Widget, register_interface: &Controller) {
-        // ########## determine appropriate stream parameters ##########
-        let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
-
-        // default stereo, 48kHz, 24 Bit stream format can be read from audio output converter widget (which gets declared further below)
-        // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget.clone()))).unwrap());
-
-        let stream_id = 1;
-        let stream = Stream::new(register_interface.output_stream_descriptors().get(0).unwrap(), stream_format.clone(), 2, 128, stream_id);
-        register_interface.configure_codec(pin_widget, 0, stream_format.clone(), stream_id, 0);
-
-        // ########## write data to buffers ##########
-
-        // let range = *stream.cyclic_buffer().length_in_bytes() / 2;
-        //
-        // for index in 0..range {
-        //     unsafe {
-        //         let address = *stream.cyclic_buffer().audio_buffers().get(0).unwrap().start_address() + (index as u64 * 2);
-        //         if (index < 5) | (index == (range  - 1)) {
-        //             let value = (address as *mut u16).read();
-        //             debug!("address: {:#x}, value: {:#x}", address, value)
-        //         }
-        //         (address as *mut u16).write((index as u16 % 160) * 409);
-        //         // (address as *mut u16).write(0);
-        //         if (index < 5) | (index == (range - 1)) {
-        //             let value = (address as *mut u16).read();
-        //             debug!("address: {:#x}, value: {:#x}", address, value)
-        //         }
-        //     }
-        // }
-
-
-       let mut saw = Vec::new();
-        for i in 0u32..32768 {
-            let sample = (i%512 * 128) as u16;
-            saw.push(sample);
-        }
-
-        stream.write_data_to_buffer(0, &saw);
-        stream.write_data_to_buffer(1, &saw);
-
-        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
-        unsafe { asm!("wbinvd"); }
-
-
-        // ########## start stream ##########
-
-        debug!("run in one second!");
-        Timer::wait(1000);
-        stream.run();
-
-
-
-        // ########## debugging sandbox ##########
-        // let connection_list_entries_mixer11 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(NodeAddress::new(0, 11), GetConnectionListEntryPayload::new(0)))).unwrap();
-        // debug!("connection list entries mixer widget: {:?}", connection_list_entries_mixer11);
-
-        // debug!("----------------------------------------------------------------------------------");
-        // sd_registers1.sdctl().dump();
-        // sd_registers1.sdsts().dump();
-        // sd_registers1.sdlpib().dump();
-        // sd_registers1.sdcbl().dump();
-        // sd_registers1.sdlvi().dump();
-        // sd_registers1.sdfifow().dump();
-        // sd_registers1.sdfifod().dump();
-        // sd_registers1.sdfmt().dump();
-        // sd_registers1.sdbdpl().dump();
-        // sd_registers1.sdbdpu().dump();
-        // debug!("----------------------------------------------------------------------------------");
-
-
-        // Timer::wait(2000);
-        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-        // Timer::wait(2000);
-        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-        // Timer::wait(2000);
-        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-        // Timer::wait(2000);
-        // debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-
-
-        Timer::wait(600000);
-    }
 }
+
+// ########## debugging sandbox ##########
+// let connection_list_entries_mixer11 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(NodeAddress::new(0, 11), GetConnectionListEntryPayload::new(0)))).unwrap();
+// debug!("connection list entries mixer widget: {:?}", connection_list_entries_mixer11);
+
+// debug!("----------------------------------------------------------------------------------");
+// sd_registers1.sdctl().dump();
+// sd_registers1.sdsts().dump();
+// sd_registers1.sdlpib().dump();
+// sd_registers1.sdcbl().dump();
+// sd_registers1.sdlvi().dump();
+// sd_registers1.sdfifow().dump();
+// sd_registers1.sdfifod().dump();
+// sd_registers1.sdfmt().dump();
+// sd_registers1.sdbdpl().dump();
+// sd_registers1.sdbdpu().dump();
+// debug!("----------------------------------------------------------------------------------");
+
+
+// Timer::wait(2000);
+// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+// Timer::wait(2000);
+// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+// Timer::wait(2000);
+// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
+// Timer::wait(2000);
+// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
