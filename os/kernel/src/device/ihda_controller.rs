@@ -1202,84 +1202,28 @@ impl Controller {
         Stream::new(self.output_stream_descriptors().get(output_sound_descriptor_number).unwrap(), stream_format, buffer_amount, pages_per_buffer, stream_id)
     }
 
-    pub fn configure_codec_for_default_stereo_output(&self, codec: &Codec, stream: &Stream) {
+    pub fn configure_codec(&self, codec: &Codec, stream: &Stream) {
         let line_out_pin_widgets_connected_to_jack = codec.function_groups().get(0).unwrap().find_line_out_pin_widgets_connected_to_jack();
         let pin_widget = *line_out_pin_widgets_connected_to_jack.get(0).unwrap();
-
-        // ########## determine appropriate stream parameters ##########
-        // let stream_format = SetStreamFormatPayload::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
-        //
-        // // default stereo, 48kHz, 24 Bit stream format can be read from audio output converter widget (which gets declared further below)
-        // // let stream_format = SetStreamFormatPayload::from_response(StreamFormatResponse::try_from(register_interface.send_command(&GetStreamFormat(audio_out_widget))).unwrap());
-        //
-        // let stream_id = 1;
-        // let stream = Stream::new(controller.output_stream_descriptors().get(0).unwrap(), stream_format, 2, 128, stream_id);
-        self.configure_codec(pin_widget, stream, 0, 0);
-
-        // ########## write data to buffers ##########
-
-        let mut saw = Vec::new();
-        for i in 0u32..32768 {
-            let sample = (i%512 * 128) as u16;
-            saw.push(sample);
-        }
-
-        stream.write_data_to_buffer(0, &saw);
-        stream.write_data_to_buffer(1, &saw);
-
-        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
-        unsafe { asm!("wbinvd"); }
-
-
-        // ########## start stream ##########
-
-        debug!("run in one second!");
-        Timer::wait(1000);
-        stream.run();
-
-        Timer::wait(600000);
-    }
-
-    pub fn configure_codec(&self, pin_widget: &Widget, stream: &Stream, connection_list_entry: usize, channel: u8) {
-        let stream_format = *stream.stream_format();
-        let stream_id = *stream.id();
-        // ########## configure codec ##########
 
         // set gain/mute for pin widget (observation: pin widget owns input and output amp; for both, gain stays at 0, no matter what value gets set, but mute reacts to set commands)
         self.immediate_command(SetAmplifierGainMute(*pin_widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
         // activate input and output for pin widget
-        let pin_widget_control = PinWidgetControlResponse::try_from(self.immediate_command(GetPinWidgetControl(*pin_widget.address()))).unwrap();
+        let pin_widget_control_response = PinWidgetControlResponse::try_from(self.immediate_command(GetPinWidgetControl(*pin_widget.address()))).unwrap();
         /* after the following command, plugging headphones in and out the jack should make an audible noise */
-        self.immediate_command(SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::new(
-            match pin_widget_control.voltage_reference_enable() {
-                VoltageReferenceSignalLevel::HiZ => VoltageReferenceSignalLevel::HiZ,
-                VoltageReferenceSignalLevel::FiftyPercent => VoltageReferenceSignalLevel::FiftyPercent,
-                VoltageReferenceSignalLevel::Ground0V => VoltageReferenceSignalLevel::Ground0V,
-                VoltageReferenceSignalLevel::EightyPercent => VoltageReferenceSignalLevel::EightyPercent,
-                VoltageReferenceSignalLevel::HundredPercent => VoltageReferenceSignalLevel::HundredPercent,
-            },
-            true,
-            true,
-            *pin_widget_control.h_phn_enable()
-        )));
+        self.immediate_command(SetPinWidgetControl(*pin_widget.address(), SetPinWidgetControlPayload::enable_input_and_output_amps(pin_widget_control_response)));
 
         let connection_list_entries_pin = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(*pin_widget.address(), GetConnectionListEntryPayload::new(0)))).unwrap();
         // debug!("connection list entries pin widget: {:?}", connection_list_entries_pin);
 
 
-        let mixer_widget = if connection_list_entry == 0 {
-            NodeAddress::new(0, *connection_list_entries_pin.connection_list_entry_at_offset_index())
-        } else {
-            NodeAddress::new(0, *connection_list_entries_pin.connection_list_entry_at_offset_index_plus_one())
-        };
-
-
+        let mixer_widget = NodeAddress::new(0, *connection_list_entries_pin.first_entry());
         // set gain/mute for mixer widget (observation: mixer widget only owns input amp; gain stays at 0, no matter what value gets set, but mute reacts to set commands)
         self.immediate_command(SetAmplifierGainMute(mixer_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Input, SetAmplifierGainMuteSide::Both, 0, false, 60)));
 
-        let connection_list_entries_mixer1 = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
-        let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer1.connection_list_entry_at_offset_index());
+        let connection_list_entries_mixer = ConnectionListEntryResponse::try_from(self.immediate_command(GetConnectionListEntry(mixer_widget, GetConnectionListEntryPayload::new(0)))).unwrap();
+        let audio_out_widget = NodeAddress::new(0, *connection_list_entries_mixer.first_entry());
 
         // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
         // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
@@ -1287,11 +1231,27 @@ impl Controller {
         self.immediate_command(SetAmplifierGainMute(audio_out_widget, SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
 
         // set stream id
-        self.immediate_command(SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(channel, stream_id)));
+        // channel number for now hard coded to 0
+        self.immediate_command(SetChannelStreamId(audio_out_widget, SetChannelStreamIdPayload::new(0, *stream.id())));
 
         // set stream format
-        self.immediate_command(SetStreamFormat(audio_out_widget, SetStreamFormatPayload::new(stream_format)));
+        self.immediate_command(SetStreamFormat(audio_out_widget, SetStreamFormatPayload::new(*stream.stream_format())));
     }
+
+    // pub fn configure_pin_widget(pin_widget: &Widget) {
+    //     match widget.audio_widget_capabilities().widget_type() {
+    //         WidgetType::AudioOutput => {}
+    //         WidgetType::AudioInput => {}
+    //         WidgetType::AudioMixer => {}
+    //         WidgetType::AudioSelector => {}
+    //         WidgetType::PinComplex => {}
+    //         WidgetType::PowerWidget => {}
+    //         WidgetType::VolumeKnobWidget => {}
+    //         WidgetType::BeepGeneratorWidget => {}
+    //         WidgetType::VendorDefinedAudioWidget => {}
+    //     }
+    //
+    // }
 }
 
 #[derive(Debug, PartialEq)]

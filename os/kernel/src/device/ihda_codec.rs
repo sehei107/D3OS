@@ -572,6 +572,21 @@ impl SetPinWidgetControlPayload {
         }
     }
 
+    pub fn enable_input_and_output_amps(pin_widget_control_response: PinWidgetControlResponse) -> Self {
+       Self::new(
+            match pin_widget_control_response.voltage_reference_enable() {
+                VoltageReferenceSignalLevel::HiZ => VoltageReferenceSignalLevel::HiZ,
+                VoltageReferenceSignalLevel::FiftyPercent => VoltageReferenceSignalLevel::FiftyPercent,
+                VoltageReferenceSignalLevel::Ground0V => VoltageReferenceSignalLevel::Ground0V,
+                VoltageReferenceSignalLevel::EightyPercent => VoltageReferenceSignalLevel::EightyPercent,
+                VoltageReferenceSignalLevel::HundredPercent => VoltageReferenceSignalLevel::HundredPercent,
+            },
+            true,
+            true,
+            *pin_widget_control_response.h_phn_enable()
+        )
+    }
+
     pub fn as_u8(&self) -> u8 {
         let voltage_reference_enable = match self.voltage_reference_enable {
             VoltageReferenceSignalLevel::HiZ => 0b000,
@@ -1284,19 +1299,19 @@ impl TryFrom<Response> for ConnectionSelectResponse {
 // temporarily only short form implemented (see section 7.3.3.3 of the specification)
 #[derive(Debug, Getters)]
 pub struct ConnectionListEntryResponse {
-    connection_list_entry_at_offset_index: u8,
-    connection_list_entry_at_offset_index_plus_one: u8,
-    connection_list_entry_at_offset_index_plus_two: u8,
-    connection_list_entry_at_offset_index_plus_three: u8,
+    first_entry: u8,
+    second_entry: u8,
+    third_entry: u8,
+    fourth_entry: u8,
 }
 
 impl ConnectionListEntryResponse {
     pub fn new(response: u32) -> Self {
         Self {
-            connection_list_entry_at_offset_index: response.bitand(0xFF) as u8,
-            connection_list_entry_at_offset_index_plus_one: (response >> 8).bitand(0xFF) as u8,
-            connection_list_entry_at_offset_index_plus_two: (response >> 16).bitand(0xFF) as u8,
-            connection_list_entry_at_offset_index_plus_three: (response >> 24).bitand(0xFF) as u8,
+            first_entry: response.bitand(0xFF) as u8,
+            second_entry: (response >> 8).bitand(0xFF) as u8,
+            third_entry: (response >> 16).bitand(0xFF) as u8,
+            fourth_entry: (response >> 24).bitand(0xFF) as u8,
         }
     }
 }

@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::arch::asm;
 use core::ops::BitOr;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, EndpointHeader, SubClass};
@@ -12,6 +14,7 @@ use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
 use crate::device::ihda_controller::{Controller};
 use crate::device::ihda_codec::{BitsPerSample, StreamFormat, StreamType};
 use crate::device::pci::PciBus;
+use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
@@ -68,7 +71,27 @@ impl IHDA {
 
         // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
         let codec = codecs.get(0).unwrap();
-        controller.configure_codec_for_default_stereo_output(codec, stream);
+        controller.configure_codec(codec, stream);
+
+        // ########## write data to buffers ##########
+
+        let mut saw = Vec::new();
+        for i in 0u32..32768 {
+            let sample = (i%512 * 128) as u16;
+            saw.push(sample);
+        }
+
+        stream.write_data_to_buffer(0, &saw);
+        stream.write_data_to_buffer(1, &saw);
+
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        unsafe { asm!("wbinvd"); }
+
+        debug!("run in one second!");
+        Timer::wait(1000);
+        stream.run();
+
+        Timer::wait(600000);
 
         Self {}
     }
