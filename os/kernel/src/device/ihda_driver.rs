@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::ops::BitOr;
+use derive_getters::Getters;
 use log::{debug, info};
 use pci_types::{Bar, BaseClass, CommandRegister, EndpointHeader, SubClass};
 use x86_64::structures::paging::{Page, PageTableFlags};
@@ -12,14 +13,18 @@ use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
 use crate::device::ihda_controller::{Controller};
-use crate::device::ihda_codec::{BitsPerSample, StreamFormat, StreamType};
+use crate::device::ihda_codec::{BitsPerSample, Codec, StreamFormat, StreamType};
 use crate::device::pci::PciBus;
 use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::memory::{MemorySpace, PAGE_SIZE};
 
-pub struct IHDA;
+#[derive(Getters)]
+pub struct IHDA {
+    pub controller: Controller,
+    pub codecs: Vec<Codec>,
+}
 
 unsafe impl Sync for IHDA {}
 unsafe impl Send for IHDA {}
@@ -64,14 +69,23 @@ impl IHDA {
 
         info!("CORB and RIRB set up and running");
 
+        // Timer::wait(600000);
+
+        Self {
+            controller,
+            codecs,
+        }
+    }
+
+    pub fn demo(&self) {
         let stream_format = StreamFormat::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
         let stream_id = 1;
-        let stream = &controller.allocate_output_stream(0, stream_format, 2, 128, stream_id);
+        let stream = &self.controller.allocate_output_stream(0, stream_format, 2, 128, stream_id);
 
 
         // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
-        let codec = codecs.get(0).unwrap();
-        controller.configure_codec_for_line_out_playback(codec, stream);
+        let codec = self.codecs.get(0).unwrap();
+        self.controller.configure_codec_for_line_out_playback(codec, stream);
 
         // ########## write data to buffers ##########
 
@@ -90,10 +104,6 @@ impl IHDA {
         debug!("run in one second!");
         Timer::wait(1000);
         stream.run();
-
-        Timer::wait(600000);
-
-        Self {}
     }
 
     fn find_ihda_device(pci_bus: &PciBus) -> &EndpointHeader {
