@@ -388,7 +388,9 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn new(mmio_base_address: u64) -> Self {
+    pub fn new(mmio_base_address: VirtAddr) -> Self {
+        let mmio_base_address = mmio_base_address.as_u64();
+
         // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
         // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
         let gctl = unsafe { (mmio_base_address as *mut u16).read() as u64 };

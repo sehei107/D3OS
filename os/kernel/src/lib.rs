@@ -19,7 +19,7 @@ use crate::device::serial;
 use crate::device::serial::{BaudRate, ComPort, SerialPort};
 use crate::device::speaker::Speaker;
 use crate::device::terminal::Terminal;
-use crate::device::ihda_driver::IHDA;
+use crate::device::ihda_driver::IntelHDAudioDevice;
 use crate::memory::alloc::{AcpiHandler, KernelAllocator};
 use crate::interrupt::interrupt_dispatcher::InterruptDispatcher;
 use crate::log::Logger;
@@ -114,7 +114,7 @@ static SERIAL_PORT: Once<SerialPort> = Once::new();
 static TERMINAL: Once<LFBTerminal> = Once::new();
 static PS2: Once<PS2> = Once::new();
 static PCI: Once<PciBus> = Once::new();
-static IHDA_SOUND_CARD: Once<IHDA> = Once::new();
+static INTEL_HD_AUDIO: Once<IntelHDAudioDevice> = Once::new();
 
 pub fn init_efi_system_table(table: SystemTable<Runtime>) {
     EFI_SYSTEM_TABLE.call_once(|| EfiSystemTable::new(table));
@@ -189,7 +189,7 @@ pub fn init_pci() {
 }
 
 pub fn init_ihda() {
-    IHDA_SOUND_CARD.call_once(|| IHDA::new());
+    INTEL_HD_AUDIO.call_once(|| IntelHDAudioDevice::new());
 }
 
 pub fn init_initrd(module: &ModuleTag) {

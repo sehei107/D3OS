@@ -11,3 +11,4 @@ pub mod pci;
 pub mod ihda_driver;
 pub mod ihda_controller;
 pub mod ihda_codec;
+mod ihda_pci;
