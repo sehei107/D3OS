@@ -547,6 +547,10 @@ impl StreamFormat {
             },
         }
     }
+
+    pub fn stereo_48khz_16bit() -> Self {
+        Self::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM)
+    }
 }
 
 

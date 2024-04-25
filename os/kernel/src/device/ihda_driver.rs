@@ -13,7 +13,7 @@ use x86_64::VirtAddr;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::{apic, interrupt_dispatcher, pci_bus, process_manager};
 use crate::device::ihda_controller::{Controller};
-use crate::device::ihda_codec::{BitsPerSample, Codec, StreamFormat, StreamType};
+use crate::device::ihda_codec::{Codec, StreamFormat};
 use crate::device::pci::PciBus;
 use crate::device::pit::Timer;
 use crate::device::qemu_cfg;
@@ -78,7 +78,7 @@ impl IHDA {
     }
 
     pub fn demo(&self) {
-        let stream_format = StreamFormat::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM);
+        let stream_format = StreamFormat::stereo_48khz_16bit();
         let stream_id = 1;
         let stream = &self.controller.allocate_output_stream(0, stream_format, 2, 128, stream_id);
 
