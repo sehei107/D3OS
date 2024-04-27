@@ -68,6 +68,11 @@ pub fn configure_pci(pci_bus: &PciBus, ihda_device: &EndpointHeader) {
     info!("Set Bus Master bit and Memory Space bit in PCI configuration space");
 }
 
+pub fn get_interrupt_line(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> InterruptLine {
+    let (_, interrupt_line) = ihda_device.interrupt(pci_bus.config_space());
+    interrupt_line
+}
+
 pub fn map_mmio_space(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> VirtAddr {
     // IHDA-MMIO address is always placed in bar 0 of the device's PCI configuration space
     let bar0 = ihda_device.bar(0, pci_bus.config_space()).unwrap();
@@ -101,9 +106,4 @@ pub fn map_mmio_space(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> VirtAdd
     info!("Mapped MMIO registers to address {:#x}", mmio_base_address);
 
     VirtAddr::new(mmio_base_address)
-}
-
-pub fn get_interrupt_line(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> InterruptLine {
-    let (_, interrupt_line) = ihda_device.interrupt(pci_bus.config_space());
-    interrupt_line
 }
