@@ -391,19 +391,18 @@ impl Controller {
     pub fn new(mmio_base_address: VirtAddr) -> Self {
         let mmio_base_address = mmio_base_address.as_u64();
 
-        // the following read addresses the Global Capacities (GCAP) register, which contains information on the amount of
-        // input, output and bidirectional stream descriptors of a specific IHDA sound card (see section 3.3.2 of the specification)
-        let gctl = unsafe { (mmio_base_address as *mut u16).read() as u64 };
-        let input_stream_descriptor_amount = (gctl >> 8) & 0xF;
-        let output_stream_descriptor_amount = (gctl >> 12) & 0xF;
-        let bidirectional_stream_descriptor_amount = (gctl >> 3) & 0b1_1111;
+        // gcap contains amount of input, output and bidirectional stream descriptors of the specific IHDA controller (see section 3.3.2 of the specification)
+        let gcap = Register::new(mmio_base_address as *mut u16, "GCAP");
+        let input_stream_descriptor_amount = (gcap.read() >> 8) & 0xF;
+        let output_stream_descriptor_amount = (gcap.read() >> 12) & 0xF;
+        let bidirectional_stream_descriptor_amount = (gcap.read() >> 3) & 0b1_1111;
 
         let mut input_stream_descriptors = Vec::new();
         for index in 0..input_stream_descriptor_amount {
             input_stream_descriptors.push(StreamDescriptorRegisters::new(
                 mmio_base_address
                     + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
-                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index)
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * index as u64)
             ));
         }
 
@@ -412,7 +411,7 @@ impl Controller {
             output_stream_descriptors.push(StreamDescriptorRegisters::new(
                 mmio_base_address
                     + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
-                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index))
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + index) as u64)
             ));
         }
 
@@ -421,12 +420,12 @@ impl Controller {
             bidirectional_stream_descriptors.push(StreamDescriptorRegisters::new(
                 mmio_base_address
                     + OFFSET_OF_FIRST_SOUND_DESCRIPTOR
-                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index))
+                    + (SOUND_DESCRIPTOR_REGISTERS_LENGTH_IN_BYTES * (input_stream_descriptor_amount + output_stream_descriptor_amount + index) as u64)
             ));
         }
 
         Self {
-            gcap: Register::new(mmio_base_address as *mut u16, "GCAP"),
+            gcap,
             vmin: Register::new((mmio_base_address + 0x2) as *mut u8, "VMIN"),
             vmaj: Register::new((mmio_base_address + 0x3) as *mut u8, "VMAJ"),
             outpay: Register::new((mmio_base_address + 0x4) as *mut u16, "OUTPAY"),
