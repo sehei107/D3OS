@@ -715,14 +715,12 @@ impl SetConverterChannelCountPayload {
 
 pub struct RawResponse {
     raw_value: u32,
-    associated_command: Command,
 }
 
 impl RawResponse {
-    pub fn new(response: u32, associated_command: Command) -> Self {
+    pub fn new(response: u32) -> Self {
         Self {
             raw_value: response,
-            associated_command,
         }
     }
 

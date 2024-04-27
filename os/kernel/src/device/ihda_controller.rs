@@ -980,19 +980,19 @@ impl Controller {
         unsafe { (address as *mut u32).read() }
     }
 
-    // ########## ICOI ##########
+    // ########## ICOI - Immediate Command Output Interface ##########
 
-    fn write_command_to_immediate_command_output_interface(&self, command: Command) {
+    fn write_command_to_icoi(&self, command: Command) {
         self.icoi.write(command.as_u32());
     }
 
-    // ########## ICII ##########
+    // ########## ICII - Immediate Command Input Interface ##########
 
-    fn read_response_from_immediate_command_input_interface(&self) -> u32 {
+    fn read_response_from_icii(&self) -> u32 {
         self.icii.read()
     }
 
-    // ########## ICSTS ##########
+    // ########## ICSTS - Immediate Command Status ##########
 
     fn immediate_command_busy_bit(&self) -> bool {
         self.icsts.is_set(0)
@@ -1020,7 +1020,7 @@ impl Controller {
     }
 
     fn immediate_command(&self, command: Command) -> Response {
-        self.write_command_to_immediate_command_output_interface(command);
+        self.write_command_to_icoi(command);
         self.set_immediate_command_busy_bit();
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
@@ -1029,7 +1029,8 @@ impl Controller {
                 panic!("IHDA immediate command timed out")
             }
         }
-        Response::new(RawResponse::new(self.read_response_from_immediate_command_input_interface(), command))
+        let raw_response = RawResponse::new(self.read_response_from_icii());
+        Response::new(raw_response, command)
     }
 
     pub fn setup_ihda_config_space(&self) {
