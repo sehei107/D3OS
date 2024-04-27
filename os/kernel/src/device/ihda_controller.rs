@@ -74,7 +74,7 @@ impl<T: LowerHex + PrimInt> Register<T> {
     pub fn clear_all_bits(&self) {
         self.write(T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
     }
-    pub fn assert_bit(&self, index: u8) -> bool {
+    pub fn is_set(&self, index: u8) -> bool {
         let bitmask: u32 = 0x1 << index;
         (self.read() & T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"))
             != T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail")
@@ -128,7 +128,7 @@ impl StreamDescriptorRegisters {
         self.sdctl.set_bit(0);
         let mut start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        while !self.sdctl.assert_bit(0) {
+        while !self.sdctl.is_set(0) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("stream reset timed out after setting SRST bit")
             }
@@ -137,15 +137,15 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(0);
         start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        while self.sdctl.assert_bit(0) {
+        while self.sdctl.is_set(0) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("stream reset timed out after clearing SRST bit")
             }
         }
     }
 
-    pub fn assert_stream_run_bit(&self) -> bool {
-        self.sdctl.assert_bit(1)
+    pub fn stream_run_bit(&self) -> bool {
+        self.sdctl.is_set(1)
     }
 
     pub fn set_stream_run_bit(&self) {
@@ -156,8 +156,8 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(1);
     }
 
-    pub fn assert_interrupt_on_completion_bit(&self) -> bool {
-        self.sdctl.assert_bit(2)
+    pub fn interrupt_on_completion_bit(&self) -> bool {
+        self.sdctl.is_set(2)
     }
 
     pub fn set_interrupt_on_completion_enable_bit(&self) {
@@ -168,8 +168,8 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(2);
     }
 
-    pub fn assert_fifo_error_interrupt_enable_bit(&self) -> bool {
-        self.sdctl.assert_bit(3)
+    pub fn fifo_error_interrupt_enable_bit(&self) -> bool {
+        self.sdctl.is_set(3)
     }
 
     pub fn set_fifo_error_interrupt_enable_bit(&self) {
@@ -180,8 +180,8 @@ impl StreamDescriptorRegisters {
         self.sdctl.clear_bit(3);
     }
 
-    pub fn assert_descriptor_error_interrupt_enable_bit(&self) -> bool {
-        self.sdctl.assert_bit(4)
+    pub fn descriptor_error_interrupt_enable_bit(&self) -> bool {
+        self.sdctl.is_set(4)
     }
 
     pub fn set_descriptor_error_interrupt_enable_bit(&self) {
@@ -195,8 +195,8 @@ impl StreamDescriptorRegisters {
     // fn stripe_control();
     // fn set_stripe_control();
 
-    pub fn assert_traffic_priority_enable_bit(&self) -> bool {
-        self.sdctl.assert_bit(18)
+    pub fn traffic_priority_enable_bit(&self) -> bool {
+        self.sdctl.is_set(18)
     }
 
     pub fn set_traffic_priority_enable_bit(&self) {
@@ -223,8 +223,8 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDSTS ##########
-    pub fn assert_buffer_completion_interrupt_status_bit(&self) -> bool {
-        self.sdsts.assert_bit(2)
+    pub fn buffer_completion_interrupt_status_bit(&self) -> bool {
+        self.sdsts.is_set(2)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
@@ -232,8 +232,8 @@ impl StreamDescriptorRegisters {
         self.sdsts.set_bit(2);
     }
 
-    pub fn assert_fifo_error_bit(&self) -> bool {
-        self.sdsts.assert_bit(3)
+    pub fn fifo_error_bit(&self) -> bool {
+        self.sdsts.is_set(3)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
@@ -241,8 +241,8 @@ impl StreamDescriptorRegisters {
         self.sdsts.set_bit(3);
     }
 
-    pub fn assert_descriptor_error_bit(&self) -> bool {
-        self.sdsts.assert_bit(4)
+    pub fn descriptor_error_bit(&self) -> bool {
+        self.sdsts.is_set(4)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
@@ -251,7 +251,7 @@ impl StreamDescriptorRegisters {
     }
 
     pub fn fifo_ready(&self) {
-        self.sdsts.assert_bit(5);
+        self.sdsts.is_set(5);
     }
 
     // ########## SDLPIB ##########
@@ -265,7 +265,7 @@ impl StreamDescriptorRegisters {
     }
 
     pub fn set_cyclic_buffer_lenght(&self, length: u32) {
-        if self.assert_stream_run_bit() {
+        if self.stream_run_bit() {
             panic!("Trying to write to SDCBL register while stream running is not allowed (see specification, section 3.3.38)");
         }
         self.sdcbl.write(length);
@@ -277,7 +277,7 @@ impl StreamDescriptorRegisters {
     }
 
     pub fn set_last_valid_index(&self, length: u8) {
-        if self.assert_stream_run_bit() {
+        if self.stream_run_bit() {
             panic!("Trying to write to SDLVI register while stream running is not allowed (see specification, section 3.3.38)");
         }
         self.sdlvi.write(length as u16);
@@ -316,7 +316,7 @@ impl StreamDescriptorRegisters {
 
     // ########## SDBDPL and SDBDPU ##########
     pub fn set_bdl_pointer_address(&self, address: u64) {
-        if self.assert_stream_run_bit() {
+        if self.stream_run_bit() {
             panic!("Trying to write to BDL address registers while stream running is not allowed (see specification, section 3.3.38)");
         }
 
@@ -483,7 +483,7 @@ impl Controller {
 
     // ########## GCAP ##########
     fn supports_64bit_bdl_addresses(&self) -> bool {
-        self.gcap.assert_bit(0)
+        self.gcap.is_set(0)
     }
 
     fn number_of_serial_data_out_signals(&self) -> u8 {
@@ -531,7 +531,7 @@ impl Controller {
         self.gctl.set_bit(0);
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        while !self.gctl.assert_bit(0) {
+        while !self.gctl.is_set(0) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("IHDA controller reset timed out")
             }
@@ -543,8 +543,8 @@ impl Controller {
 
     // fn initiate_flush();
 
-    fn assert_unsolicited_response_enable_bit(&self) -> bool {
-        self.gctl.assert_bit(8)
+    fn unsolicited_response_enable_bit(&self) -> bool {
+        self.gctl.is_set(8)
     }
 
     fn set_unsolicited_response_enable_bit(&self) {
@@ -557,9 +557,9 @@ impl Controller {
 
     // ########## WAKEEN ##########
 
-    fn assert_sdin_wake_enable_bit(&self, sdin_index: u8) -> bool {
+    fn sdin_wake_enable_bit(&self, sdin_index: u8) -> bool {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
-        self.wakeen.assert_bit(sdin_index)
+        self.wakeen.is_set(sdin_index)
     }
 
     fn set_sdin_wake_enable_bit(&self, sdin_index : u8) {
@@ -574,9 +574,9 @@ impl Controller {
 
     // ########## WAKESTS ##########
 
-    fn assert_sdin_state_change_status_bit(&self, sdin_index: u8) -> bool {
+    fn sdin_state_change_status_bit(&self, sdin_index: u8) -> bool {
         if sdin_index > MAX_AMOUNT_OF_SDIN_SIGNALS - 1 { panic!("index of SDIN signal out of range") }
-        self.wakests.assert_bit(sdin_index)
+        self.wakests.is_set(sdin_index)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
@@ -587,8 +587,8 @@ impl Controller {
 
     // ########## GSTS ##########
 
-     fn assert_flush_status_bit(&self) -> bool {
-        self.gsts.assert_bit(1)
+     fn flush_status_bit(&self) -> bool {
+        self.gsts.is_set(1)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
@@ -598,7 +598,7 @@ impl Controller {
 
     // ########## GCAP2 ##########
      fn energy_efficient_audio_capability(&self) -> bool {
-        self.gsts.assert_bit(0)
+        self.gsts.is_set(0)
     }
 
     // ########## OUTSTRMPAY ##########
@@ -613,14 +613,14 @@ impl Controller {
 
     // ########## INTCTL ##########
 
-    //  fn assert_stream_interrupt_enable_bit(&self) -> bool;
+    //  fn stream_interrupt_enable_bit(&self) -> bool;
     //
     //  fn set_stream_interrupt_enable_bit(&self);
     //
     //  fn clear_stream_interrupt_enable_bit(&self);
 
-     fn assert_controller_interrupt_enable_bit(&self) -> bool {
-        self.intctl.assert_bit(30)
+     fn controller_interrupt_enable_bit(&self) -> bool {
+        self.intctl.is_set(30)
     }
 
      fn set_controller_interrupt_enable_bit(&self) {
@@ -631,8 +631,8 @@ impl Controller {
         self.intctl.clear_bit(30);
     }
 
-     fn assert_global_interrupt_enable_bit(&self) -> bool {
-        self.intctl.assert_bit(31)
+     fn global_interrupt_enable_bit(&self) -> bool {
+        self.intctl.is_set(31)
     }
 
      fn set_global_interrupt_enable_bit(&self) {
@@ -698,7 +698,7 @@ impl Controller {
         let start_timer = timer().read().systime_ms();
         // value for CORBRPRST_TIMEOUT arbitrarily chosen
         
-        while !self.corbrp.assert_bit(15) {
+        while !self.corbrp.is_set(15) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("CORB read pointer reset timed out")
             }
@@ -709,8 +709,8 @@ impl Controller {
 
     // ########## CORBCTL ##########
 
-     fn assert_corb_memory_error_interrupt_enable_bit(&self) -> bool {
-        self.corbctl.assert_bit(0)
+     fn corb_memory_error_interrupt_enable_bit(&self) -> bool {
+        self.corbctl.is_set(0)
     }
 
      fn set_corb_memory_error_interrupt_enable_bit(&self) {
@@ -726,7 +726,7 @@ impl Controller {
         
         // software must read back value (see specification, section 3.3.22)
         let start_timer = timer().read().systime_ms();
-        while !self.corbctl.assert_bit(1) {
+        while !self.corbctl.is_set(1) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("IHDA controller reset timed out")
             }
@@ -738,7 +738,7 @@ impl Controller {
 
         // software must read back value (see specification, section 3.3.22)
         let start_timer = timer().read().systime_ms();
-        while self.corbctl.assert_bit(1) {
+        while self.corbctl.is_set(1) {
             if timer().read().systime_ms() > start_timer + BIT_ASSERTION_TIMEOUT_IN_MS {
                 panic!("IHDA controller reset timed out")
             }
@@ -747,8 +747,8 @@ impl Controller {
 
     // ########## CORBSTS ##########
 
-     fn assert_corb_memory_error_indication_bit(&self) -> bool {
-        self.corbsts.assert_bit(0)
+     fn corb_memory_error_indication_bit(&self) -> bool {
+        self.corbsts.is_set(0)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.10)
@@ -777,9 +777,9 @@ impl Controller {
 
      fn corb_size_capability(&self) -> RingbufferCapability {
         RingbufferCapability::new(
-            self.corbsize.assert_bit(4),
-            self.corbsize.assert_bit(5),
-            self.corbsize.assert_bit(6),
+            self.corbsize.is_set(4),
+            self.corbsize.is_set(5),
+            self.corbsize.is_set(6),
         )
     }
 
@@ -842,8 +842,8 @@ impl Controller {
 
     // ########## RIRBCTL ##########
 
-     fn assert_response_interrupt_control_bit(&self) -> bool {
-        self.rirbctl.assert_bit(0)
+     fn response_interrupt_control_bit(&self) -> bool {
+        self.rirbctl.is_set(0)
     }
 
      fn set_response_interrupt_control_bit(&self) {
@@ -854,8 +854,8 @@ impl Controller {
         self.rirbctl.clear_bit(0);
     }
 
-     fn assert_rirb_dma_enable_bit(&self) -> bool {
-        self.rirbctl.assert_bit(1)
+     fn rirb_dma_enable_bit(&self) -> bool {
+        self.rirbctl.is_set(1)
     }
 
      fn start_rirb_dma(&self) {
@@ -866,8 +866,8 @@ impl Controller {
         self.rirbctl.clear_bit(1);
     }
 
-     fn assert_response_overrun_interrupt_control_bit(&self) -> bool {
-        self.rirbctl.assert_bit(2)
+     fn response_overrun_interrupt_control_bit(&self) -> bool {
+        self.rirbctl.is_set(2)
     }
 
      fn set_response_overrun_interrupt_control_bit(&self) {
@@ -884,9 +884,9 @@ impl Controller {
 
      fn rirb_size_capability(&self) -> RingbufferCapability {
         RingbufferCapability::new(
-            self.rirbsize.assert_bit(4),
-            self.rirbsize.assert_bit(5),
-            self.rirbsize.assert_bit(6),
+            self.rirbsize.is_set(4),
+            self.rirbsize.is_set(5),
+            self.rirbsize.is_set(6),
         )
     }
 
@@ -963,7 +963,7 @@ impl Controller {
         let ubase = ((start_address & 0xFFFFFFFF_00000000) >> 32) as u32;
 
         // preserve DMA Position Buffer Enable bit at position 0 when writing address
-        self.dpiblbase.write(lbase | (self.dpiblbase.assert_bit(0) as u32));
+        self.dpiblbase.write(lbase | (self.dpiblbase.is_set(0) as u32));
         self.dpibubase.write(ubase);
     }
 
@@ -994,8 +994,8 @@ impl Controller {
 
     // ########## ICSTS ##########
 
-    fn assert_immediate_command_busy_bit(&self) -> bool {
-        self.icsts.assert_bit(0)
+    fn immediate_command_busy_bit(&self) -> bool {
+        self.icsts.is_set(0)
     }
 
     fn set_immediate_command_busy_bit(&self) {
@@ -1006,8 +1006,8 @@ impl Controller {
         self.icsts.clear_bit(0);
     }
 
-    fn assert_immediate_result_valid_bit(&self) -> bool {
-        self.icsts.assert_bit(1)
+    fn immediate_result_valid_bit(&self) -> bool {
+        self.icsts.is_set(1)
     }
 
     fn set_immediate_result_ready_bit(&self) {
@@ -1024,7 +1024,7 @@ impl Controller {
         self.set_immediate_command_busy_bit();
         let start_timer = timer().read().systime_ms();
         // value for CRST_TIMEOUT arbitrarily chosen
-        while !self.assert_immediate_result_valid_bit() {
+        while !self.immediate_result_valid_bit() {
             if timer().read().systime_ms() > start_timer + IMMEDIATE_COMMAND_TIMEOUT_IN_MS {
                 panic!("IHDA immediate command timed out")
             }
@@ -1049,7 +1049,7 @@ impl Controller {
         let mut codecs: Vec<Codec> = Vec::new();
 
         for codec_address in 0..MAX_AMOUNT_OF_CODECS {
-            if self.wakests().assert_bit(codec_address) {
+            if self.wakests().is_set(codec_address) {
                 let root_node_addr = NodeAddress::new(codec_address, 0);
                 let vendor_id = VendorIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, VendorId))).unwrap();
                 let revision_id = RevisionIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, RevisionId))).unwrap();
