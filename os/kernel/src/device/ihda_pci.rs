@@ -39,8 +39,16 @@ pub fn find_ihda_device(pci_bus: &PciBus) -> &EndpointHeader {
         if qemu_cfg::is_available() {
             ihda_devices[0]
         } else {
-            info!("WARNING: device selection currently hard coded!");
-            ihda_devices[1]
+            for device in ihda_devices {
+                match device.header().id(pci_bus.config_space()) {
+                    (vendor_id, device_id) => {
+                        if vendor_id == 0x8086 && device_id == 0x8c20 {
+                            return device;
+                        }
+                    }
+                }
+            }
+            panic!("None of the found IHDA devices is supported by the driver.")
         }
     } else {
         panic!("No IHDA device found!");
