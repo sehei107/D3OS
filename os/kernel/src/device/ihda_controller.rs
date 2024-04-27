@@ -373,7 +373,7 @@ pub struct Controller {
     rirbsize: Register<u8>,
     icoi: Register<u32>,
     icii: Register<u32>,
-    icis: Register<u16>,
+    icsts: Register<u16>,
     dpiblbase: Register<u32>,
     dpibubase: Register<u32>,
 
@@ -466,7 +466,7 @@ impl Controller {
             // the following three immediate command registers from bytes 0x60 to 0x69 are optional
             icoi: Register::new((mmio_base_address + 0x60) as *mut u32, "ICOI"),
             icii: Register::new((mmio_base_address + 0x64) as *mut u32, "ICII"),
-            icis: Register::new((mmio_base_address + 0x68) as *mut u16, "ICIS"),
+            icsts: Register::new((mmio_base_address + 0x68) as *mut u16, "ICSTS"),
             // bytes with offset 0x6A to 0x6F are reserved
             dpiblbase: Register::new((mmio_base_address + 0x70) as *mut u32, "DPIBLBASE"),
             dpibubase: Register::new((mmio_base_address + 0x74) as *mut u32, "DPIBUBASE"),
@@ -992,31 +992,31 @@ impl Controller {
         self.icii.read()
     }
 
-    // ########## ICIS ##########
+    // ########## ICSTS ##########
 
     fn assert_immediate_command_busy_bit(&self) -> bool {
-        self.icis.assert_bit(0)
+        self.icsts.assert_bit(0)
     }
 
     fn set_immediate_command_busy_bit(&self) {
-        self.icis.set_bit(0);
+        self.icsts.set_bit(0);
     }
 
     fn clear_immediate_command_busy_bit(&self) {
-        self.icis.clear_bit(0);
+        self.icsts.clear_bit(0);
     }
 
     fn assert_immediate_result_valid_bit(&self) -> bool {
-        self.icis.assert_bit(1)
+        self.icsts.assert_bit(1)
     }
 
     fn set_immediate_result_ready_bit(&self) {
-        self.icis.set_bit(1);
+        self.icsts.set_bit(1);
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.4.3)
     fn clear_immediate_result_ready_bit(&self) {
-        self.icis.set_bit(1);
+        self.icsts.set_bit(1);
     }
 
     fn immediate_command(&self, command: Command) -> Response {
