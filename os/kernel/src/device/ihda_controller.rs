@@ -36,7 +36,7 @@ const CONTAINER_32BIT_SIZE_IN_BYTES: u32 = 4;
 
 
 // representation of an IHDA register
-pub struct Register<T: LowerHex + PrimInt> {
+struct Register<T: LowerHex + PrimInt> {
     ptr: *mut T,
     name: &'static str,
 }
@@ -44,49 +44,49 @@ pub struct Register<T: LowerHex + PrimInt> {
 // the LowerHex type bound is only necessary because of the dump function which displays T as a hex value
 // the PrimeInt type bound is necessary because of the bit operations | and <<
 impl<T: LowerHex + PrimInt> Register<T> {
-    pub const fn new(ptr: *mut T, name: &'static str) -> Self {
+    const fn new(ptr: *mut T, name: &'static str) -> Self {
         Self {
             ptr,
             name,
         }
     }
-    pub fn read(&self) -> T {
+    fn read(&self) -> T {
         unsafe {
             self.ptr.read()
         }
     }
-    pub fn write(&self, value: T) {
+    fn write(&self, value: T) {
         unsafe {
             self.ptr.write(value);
         }
     }
-    pub fn set_bit(&self, index: u8) {
+    fn set_bit(&self, index: u8) {
         let bitmask: u32 = 0x1 << index;
         self.write(self.read() | T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
     }
-    pub fn clear_bit(&self, index: u8) {
+    fn clear_bit(&self, index: u8) {
         let bitmask: u32 = 0x1 << index;
         self.write(self.read() & !T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"));
     }
-    pub fn set_all_bits(&self) {
+    fn set_all_bits(&self) {
         self.write(!T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
     }
-    pub fn clear_all_bits(&self) {
+    fn clear_all_bits(&self) {
         self.write(T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail"));
     }
-    pub fn is_set(&self, index: u8) -> bool {
+    fn is_set(&self, index: u8) -> bool {
         let bitmask: u32 = 0x1 << index;
         (self.read() & T::from(bitmask).expect("As only u8, u16 and u32 are used as types for T, this should only fail if index is out of register range"))
             != T::from(0).expect("As only u8, u16 and u32 are used as types for T, this should never fail")
     }
-    pub fn dump(&self) {
+    fn dump(&self) {
         debug!("Value read from register {}: {:#x}", self.name, self.read());
     }
 }
 
 // representation of a register set for each stream descriptor (starting at offset 0x80)
 #[derive(Getters)]
-pub struct StreamDescriptorRegisters {
+struct StreamDescriptorRegisters {
     // careful: the sdctl register is only 3 bytes long, so that reading the register as an u32 also reads the sdsts register in the last byte
     // the last byte of the read value should therefore not be manipulated
     sdctl: Register<u32>,
@@ -104,7 +104,7 @@ pub struct StreamDescriptorRegisters {
 }
 
 impl StreamDescriptorRegisters {
-    pub fn new(sd_base_address: u64) -> Self {
+    fn new(sd_base_address: u64) -> Self {
         Self {
             sdctl: Register::new(sd_base_address as *mut u32, "SDCTL"),
             sdsts: Register::new((sd_base_address + 0x3) as *mut u8, "SDSTS"),
@@ -122,7 +122,7 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDCTL ##########
-    pub fn reset_stream(&self) {
+    fn reset_stream(&self) {
         self.clear_stream_run_bit();
 
         self.sdctl.set_bit(0);
@@ -144,127 +144,127 @@ impl StreamDescriptorRegisters {
         }
     }
 
-    pub fn stream_run_bit(&self) -> bool {
+    fn stream_run_bit(&self) -> bool {
         self.sdctl.is_set(1)
     }
 
-    pub fn set_stream_run_bit(&self) {
+    fn set_stream_run_bit(&self) {
         self.sdctl.set_bit(1);
     }
 
-    pub fn clear_stream_run_bit(&self) {
+    fn clear_stream_run_bit(&self) {
         self.sdctl.clear_bit(1);
     }
 
-    pub fn interrupt_on_completion_bit(&self) -> bool {
+    fn interrupt_on_completion_bit(&self) -> bool {
         self.sdctl.is_set(2)
     }
 
-    pub fn set_interrupt_on_completion_enable_bit(&self) {
+    fn set_interrupt_on_completion_enable_bit(&self) {
         self.sdctl.set_bit(2);
     }
 
-    pub fn clear_interrupt_on_completion_bit(&self) {
+    fn clear_interrupt_on_completion_bit(&self) {
         self.sdctl.clear_bit(2);
     }
 
-    pub fn fifo_error_interrupt_enable_bit(&self) -> bool {
+    fn fifo_error_interrupt_enable_bit(&self) -> bool {
         self.sdctl.is_set(3)
     }
 
-    pub fn set_fifo_error_interrupt_enable_bit(&self) {
+    fn set_fifo_error_interrupt_enable_bit(&self) {
         self.sdctl.set_bit(3);
     }
 
-    pub fn clear_fifo_error_interrupt_enable_bit(&self) {
+    fn clear_fifo_error_interrupt_enable_bit(&self) {
         self.sdctl.clear_bit(3);
     }
 
-    pub fn descriptor_error_interrupt_enable_bit(&self) -> bool {
+    fn descriptor_error_interrupt_enable_bit(&self) -> bool {
         self.sdctl.is_set(4)
     }
 
-    pub fn set_descriptor_error_interrupt_enable_bit(&self) {
+    fn set_descriptor_error_interrupt_enable_bit(&self) {
         self.sdctl.set_bit(4);
     }
 
-    pub fn clear_descriptor_error_interrupt_enable_bit(&self) {
+    fn clear_descriptor_error_interrupt_enable_bit(&self) {
         self.sdctl.clear_bit(4);
     }
 
     // fn stripe_control();
     // fn set_stripe_control();
 
-    pub fn traffic_priority_enable_bit(&self) -> bool {
+    fn traffic_priority_enable_bit(&self) -> bool {
         self.sdctl.is_set(18)
     }
 
-    pub fn set_traffic_priority_enable_bit(&self) {
+    fn set_traffic_priority_enable_bit(&self) {
         self.sdctl.set_bit(18);
     }
 
-    pub fn clear_traffic_priority_enable_bit(&self) {
+    fn clear_traffic_priority_enable_bit(&self) {
         self.sdctl.clear_bit(18);
     }
 
     // fn set_bidirectional_stream_as_input()
     // fn set_bidirectional_stream_as_output()
 
-    pub fn stream_id(&self) -> u8 {
+    fn stream_id(&self) -> u8 {
         match (self.sdctl.read() >> 20) & 0xF {
             0 => panic!("IHDA sound card reports an invalid stream number"),
             stream_number => stream_number as u8,
         }
     }
 
-    pub fn set_stream_id(&self, stream_id: u8) {
+    fn set_stream_id(&self, stream_id: u8) {
         // REMINDER: the highest byte of self.sdctl.read() is the sdsts register and should not be modified
         self.sdctl.write((self.sdctl.read() & 0xFF0F_FFFF) | ((stream_id as u32) << 20));
     }
 
     // ########## SDSTS ##########
-    pub fn buffer_completion_interrupt_status_bit(&self) -> bool {
+    fn buffer_completion_interrupt_status_bit(&self) -> bool {
         self.sdsts.is_set(2)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
-    pub fn clear_buffer_completion_interrupt_status_bit(&self) {
+    fn clear_buffer_completion_interrupt_status_bit(&self) {
         self.sdsts.set_bit(2);
     }
 
-    pub fn fifo_error_bit(&self) -> bool {
+    fn fifo_error_bit(&self) -> bool {
         self.sdsts.is_set(3)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
-    pub fn clear_fifo_error_bit(&self) {
+    fn clear_fifo_error_bit(&self) {
         self.sdsts.set_bit(3);
     }
 
-    pub fn descriptor_error_bit(&self) -> bool {
+    fn descriptor_error_bit(&self) -> bool {
         self.sdsts.is_set(4)
     }
 
     // bit gets cleared by writing a 1 to it (see specification, section 3.3.9)
-    pub fn clear_descriptor_error_bit(&self) {
+    fn clear_descriptor_error_bit(&self) {
         self.sdsts.set_bit(4);
     }
 
-    pub fn fifo_ready(&self) {
+    fn fifo_ready(&self) {
         self.sdsts.is_set(5);
     }
 
     // ########## SDLPIB ##########
-    pub fn link_position_in_buffer(&self) -> u32 {
+    fn link_position_in_buffer(&self) -> u32 {
         self.sdlpib.read()
     }
 
     // ########## SDCBL ##########
-    pub fn cyclic_buffer_lenght(&self) -> u32 {
+    fn cyclic_buffer_lenght(&self) -> u32 {
         self.sdcbl.read()
     }
 
-    pub fn set_cyclic_buffer_lenght(&self, length: u32) {
+    fn set_cyclic_buffer_lenght(&self, length: u32) {
         if self.stream_run_bit() {
             panic!("Trying to write to SDCBL register while stream running is not allowed (see specification, section 3.3.38)");
         }
@@ -272,11 +272,11 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDLVI ##########
-    pub fn last_valid_index(&self) -> u8 {
+    fn last_valid_index(&self) -> u8 {
         (self.sdlvi.read() & 0xFF) as u8
     }
 
-    pub fn set_last_valid_index(&self, length: u8) {
+    fn set_last_valid_index(&self, length: u8) {
         if self.stream_run_bit() {
             panic!("Trying to write to SDLVI register while stream running is not allowed (see specification, section 3.3.38)");
         }
@@ -284,7 +284,7 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDFIFOW ##########
-    pub fn fifo_watermark(&self) -> FIFOWatermark {
+    fn fifo_watermark(&self) -> FIFOWatermark {
         match (self.sdfifow.read() & 0b111) as u8 {
             0b100 => FIFOWatermark::Bit32,
             0b101 => FIFOWatermark::Bit64,
@@ -292,7 +292,7 @@ impl StreamDescriptorRegisters {
         }
     }
 
-    pub fn set_fifo_watermark(&self, watermark: FIFOWatermark) {
+    fn set_fifo_watermark(&self, watermark: FIFOWatermark) {
         match watermark {
             FIFOWatermark::Bit32 => self.sdfifow.write(0b100),
             FIFOWatermark::Bit64 => self.sdfifow.write(0b101),
@@ -300,22 +300,22 @@ impl StreamDescriptorRegisters {
     }
 
     // ########## SDFIFOD ##########
-    pub fn fifo_size(&self) -> u16 {
+    fn fifo_size(&self) -> u16 {
         self.sdfifod.read()
     }
 
     // ########## SDFMT ##########
     // _TODO_: maybe refactor by returning StreamFormat struct (not existing yet), as StreamFormatResponse should only be associated to converter widgets' stream format, not the format of a stream
-    pub fn stream_format(&self) -> StreamFormat {
+    fn stream_format(&self) -> StreamFormat {
         StreamFormat::from_u16(self.sdfmt.read())
     }
 
-    pub fn set_stream_format(&self, stream_format: StreamFormat) {
+    fn set_stream_format(&self, stream_format: StreamFormat) {
         self.sdfmt.write(stream_format.as_u16());
     }
 
     // ########## SDBDPL and SDBDPU ##########
-    pub fn set_bdl_pointer_address(&self, address: u64) {
+    fn set_bdl_pointer_address(&self, address: u64) {
         if self.stream_run_bit() {
             panic!("Trying to write to BDL address registers while stream running is not allowed (see specification, section 3.3.38)");
         }
@@ -324,14 +324,14 @@ impl StreamDescriptorRegisters {
         self.sdbdpu.write(((address & 0xFFFFFFFF_00000000) >> 32) as u32);
     }
 
-    pub fn bdl_pointer_address(&self) -> u64 {
+    fn bdl_pointer_address(&self) -> u64 {
         ((self.sdbdpu.read() as u64) << 32) | self.sdbdpl.read() as u64
     }
 }
 
 
 #[derive(Clone, Debug)]
-pub enum FIFOWatermark {
+enum FIFOWatermark {
     Bit32,
     Bit64,
 }
@@ -1252,7 +1252,7 @@ impl Controller {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum CorbSize {
+enum CorbSize {
     TwoEntries,
     SixteenEntries,
     TwoHundredFiftySixEntries,
@@ -1269,7 +1269,7 @@ impl CorbSize {
 }
 
 #[derive(Debug, Getters)]
-pub struct RingbufferCapability {
+struct RingbufferCapability {
     support_two_entries: bool,
     support_sixteen_entries: bool,
     support_two_hundred_fifty_six_entries: bool,
@@ -1286,14 +1286,14 @@ impl RingbufferCapability {
 }
 
 #[derive(Debug, Getters)]
-pub struct BufferDescriptorListEntry {
+struct BufferDescriptorListEntry {
     address: u64,
     length_in_bytes: u32,
     interrupt_on_completion: bool,
 }
 
 impl BufferDescriptorListEntry {
-    pub fn new(address: u64, length_in_bytes: u32, interrupt_on_completion: bool) -> Self {
+    fn new(address: u64, length_in_bytes: u32, interrupt_on_completion: bool) -> Self {
         Self {
             address,
             length_in_bytes,
@@ -1301,7 +1301,7 @@ impl BufferDescriptorListEntry {
         }
     }
 
-    pub fn from(raw_data: u128) -> Self {
+    fn from(raw_data: u128) -> Self {
         Self {
             address: (raw_data & 0xFFFF_FFFF_FFFF_FFFF) as u64,
             length_in_bytes: ((raw_data >> 64) & 0xFFFF_FFFF) as u32,
@@ -1311,20 +1311,20 @@ impl BufferDescriptorListEntry {
         }
     }
 
-    pub fn as_u128(&self) -> u128 {
+    fn as_u128(&self) -> u128 {
         (self.interrupt_on_completion as u128) << 96 | (self.length_in_bytes as u128) << 64 | self.address as u128
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct BufferDescriptorList {
+struct BufferDescriptorList {
     base_address: u64,
     entries: Vec<BufferDescriptorListEntry>,
     last_valid_index: u8,
 }
 
 impl BufferDescriptorList {
-    pub fn new(cyclic_buffer: &CyclicBuffer) -> Self {
+    fn new(cyclic_buffer: &CyclicBuffer) -> Self {
         // setup MMIO space for buffer descriptor list
         // allocate one 4096 bit page which has space for 32 bdl entries with 128 bit each
         // a bdl needs to provide space for at least two entries (256 bit), see specification, section 3.6.2
@@ -1354,7 +1354,7 @@ impl BufferDescriptorList {
         }
     }
 
-    pub fn get_entry(&self, index: u64) -> BufferDescriptorListEntry {
+    fn get_entry(&self, index: u64) -> BufferDescriptorListEntry {
         unsafe {
             let address = VolatilePtr::new(NonNull::new((self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES)) as *mut u128).unwrap());
             let raw_data = address.read();
@@ -1362,7 +1362,7 @@ impl BufferDescriptorList {
         }
     }
 
-    pub fn set_entry(&self, index: u64, entry: &BufferDescriptorListEntry) {
+    fn set_entry(&self, index: u64, entry: &BufferDescriptorListEntry) {
         unsafe {
             let address = VolatilePtr::new(NonNull::new((self.base_address + (index * BUFFER_DESCRIPTOR_LIST_ENTRY_SIZE_IN_BYTES)) as *mut u128).unwrap());
             address.write(entry.as_u128())
@@ -1372,38 +1372,38 @@ impl BufferDescriptorList {
 
 
 #[derive(Debug, Getters)]
-pub struct AudioBuffer {
+struct AudioBuffer {
     start_address: u64,
     length_in_bytes: u32,
 }
 
 impl AudioBuffer {
-    pub fn new(start_address: u64, length_in_bytes: u32) -> Self {
+    fn new(start_address: u64, length_in_bytes: u32) -> Self {
         Self {
             start_address,
             length_in_bytes,
         }
     }
 
-    pub fn read_sample_from_buffer(&self, index: u64) -> u16 {
+    fn read_sample_from_buffer(&self, index: u64) -> u16 {
         let address = self.start_address + (index * (CONTAINER_16BIT_SIZE_IN_BYTES as u64));
         unsafe { (address as *mut u16).read() }
     }
 
-    pub fn write_sample_to_buffer(&self, sample: u16, index: u64) {
+    fn write_sample_to_buffer(&self, sample: u16, index: u64) {
         let address = self.start_address + (index * (CONTAINER_16BIT_SIZE_IN_BYTES as u64));
         unsafe { (address as *mut u16).write(sample); }
     }
 }
 
 #[derive(Debug, Getters)]
-pub struct CyclicBuffer {
+struct CyclicBuffer {
     length_in_bytes: u32,
     audio_buffers: Vec<AudioBuffer>,
 }
 
 impl CyclicBuffer {
-    pub fn new(buffer_amount: u32, pages_per_buffer: u32) -> Self {
+    fn new(buffer_amount: u32, pages_per_buffer: u32) -> Self {
         let buffer_frame_range = alloc_no_cache_dma_memory(buffer_amount * pages_per_buffer);
         let buffer_size_in_bits = pages_per_buffer * PAGE_SIZE as u32;
         let buffer_size_in_bytes = buffer_size_in_bits / 8;
@@ -1419,7 +1419,7 @@ impl CyclicBuffer {
         }
     }
 
-    pub fn write_samples_to_buffer(&self, buffer_index: usize, samples: &Vec<u16>) {
+    fn write_samples_to_buffer(&self, buffer_index: usize, samples: &Vec<u16>) {
         let buffer = self.audio_buffers().get(buffer_index).unwrap();
         for (index, sample) in samples.iter().enumerate() {
             buffer.write_sample_to_buffer(*sample, index as u64)
@@ -1438,7 +1438,7 @@ pub struct Stream<'a> {
 
 impl<'a> Stream<'a> {
 
-    pub fn new(
+    fn new(
         sd_registers: &'a StreamDescriptorRegisters,
         stream_format: StreamFormat,
         buffer_amount: u32,
@@ -1487,7 +1487,7 @@ impl<'a> Stream<'a> {
         }
     }
 
-    // pub fn write_data_to_buffer(&self, buffer_index: usize, samples: Vec<u16>) {
+    // fn write_data_to_buffer(&self, buffer_index: usize, samples: Vec<u16>) {
     //     self.cyclic_buffer().write_samples_to_buffer(buffer_index, samples);
     // }
 
@@ -1499,7 +1499,7 @@ impl<'a> Stream<'a> {
         self.sd_registers.set_stream_run_bit();
     }
 
-    pub fn stop(&self) {
+    fn stop(&self) {
         self.sd_registers.clear_stream_run_bit();
     }
 
@@ -1509,7 +1509,7 @@ impl<'a> Stream<'a> {
 
 
 // #[derive(Clone, Debug)]
-// pub enum BitDepth {
+// enum BitDepth {
 //     BitDepth8Bit,
 //     BitDepth16Bit,
 //     BitDepth20Bit,
@@ -1518,7 +1518,7 @@ impl<'a> Stream<'a> {
 // }
 //
 // #[derive(Clone, Debug)]
-// pub enum Sample {
+// enum Sample {
 //     Sample8Bit(u8),
 //     Sample16Bit(u16),
 //     Sample20Bit(u32),
@@ -1527,12 +1527,12 @@ impl<'a> Stream<'a> {
 // }
 //
 // #[derive(Clone, Debug, Getters)]
-// pub struct SampleContainer {
-//     pub value: Sample,
+// struct SampleContainer {
+//     value: Sample,
 // }
 //
 // impl SampleContainer {
-//     pub fn new(value: u32, bit_depth: BitDepth) -> Self {
+//     fn new(value: u32, bit_depth: BitDepth) -> Self {
 //         match bit_depth {
 //             BitDepth::BitDepth8Bit => {
 //                 if value > 2.pow(8) - 1 {
@@ -1577,7 +1577,7 @@ impl<'a> Stream<'a> {
 //         }
 //     }
 //
-//     pub fn length_in_bytes(&self) -> usize {
+//     fn length_in_bytes(&self) -> usize {
 //         match self.value {
 //             Sample8Bit(_) => 1,
 //             Sample16Bit(_) => 2,
@@ -1585,7 +1585,7 @@ impl<'a> Stream<'a> {
 //         }
 //     }
 //
-//     pub fn as_unsigned<T: PrimInt>(&self) -> T {
+//     fn as_unsigned<T: PrimInt>(&self) -> T {
 //         match self.value {
 //             Sample8Bit(value) => { T::from(value).unwrap() }
 //             Sample16Bit(value) => { T::from(value).unwrap() }
@@ -1597,18 +1597,18 @@ impl<'a> Stream<'a> {
 // }
 //
 // #[derive(Clone, Debug, Getters)]
-// pub struct Package {
+// struct Package {
 //     samples: Vec<SampleContainer>,
 // }
 //
 // impl Package {
-//     pub fn new(samples: Vec<SampleContainer>) -> Self {
+//     fn new(samples: Vec<SampleContainer>) -> Self {
 //         Self {
 //             samples
 //         }
 //     }
 //
-//     pub fn length_in_bytes(&self) -> u32 {
+//     fn length_in_bytes(&self) -> u32 {
 //         (self.samples.len()  * self.samples().get(0).unwrap().length_in_bytes()) as u32
 //     }
 // }
@@ -1617,7 +1617,7 @@ impl<'a> Stream<'a> {
 
 
 
-pub fn alloc_no_cache_dma_memory(frame_count: u32) -> PhysFrameRange {
+fn alloc_no_cache_dma_memory(frame_count: u32) -> PhysFrameRange {
     let phys_frame_range = memory::physical::alloc(frame_count as usize);
 
     let kernel_address_space = process_manager().read().kernel_process().unwrap().address_space();

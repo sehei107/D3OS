@@ -761,8 +761,8 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn new(response: RawResponse) -> Response {
-        match response.associated_command {
+    pub fn new(response: RawResponse, associated_command: Command) -> Response {
+        match associated_command {
             Command::GetParameter(_, parameter) => {
                 match parameter {
                     Parameter::VendorId => Response::VendorId(VendorIdResponse::new(response)),
