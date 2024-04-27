@@ -286,6 +286,10 @@ pub fn pci_bus() -> &'static PciBus {
     PCI.get().expect("Trying to access PCI bus before initialization!")
 }
 
+pub fn intel_hd_audio_device() -> &'static IntelHDAudioDevice {
+    INTEL_HD_AUDIO.get().expect("Trying to access Intel HD Audio device bus before initialization!")
+}
+
 #[no_mangle]
 pub extern "C" fn tss_set_rsp0(rsp0: u64) {
     tss().lock().privilege_stack_table[0] = VirtAddr::new(rsp0);

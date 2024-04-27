@@ -3,7 +3,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::arch::asm;
-use derive_getters::Getters;
 use log::{debug, info};
 use pci_types::InterruptLine;
 use crate::interrupt::interrupt_handler::InterruptHandler;
@@ -14,7 +13,6 @@ use crate::device::ihda_pci::{configure_pci, find_ihda_device, get_interrupt_lin
 use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 
-#[derive(Getters)]
 pub struct IntelHDAudioDevice {
     pub controller: Controller,
     pub codecs: Vec<Codec>,
@@ -39,23 +37,25 @@ impl IntelHDAudioDevice {
         let ihda_device = find_ihda_device(pci_bus);
 
         configure_pci(pci_bus, ihda_device);
-        Self::connect_interrupt_line(get_interrupt_line(pci_bus, ihda_device));
+        let interrupt_line = get_interrupt_line(pci_bus, ihda_device);
+        Self::connect_device_to_apic(interrupt_line);
 
-        let controller = Controller::new(map_mmio_space(pci_bus, ihda_device));
+        let mmio_base_address = map_mmio_space(pci_bus, ihda_device);
+        let controller = Controller::new(mmio_base_address);
 
         controller.reset();
         info!("IHDA Controller reset complete");
 
         // the following function call is irrelevant when not using interrupts
-        // register_interface.setup_ihda_config_space();
+        controller.setup_ihda_config_space();
         info!("IHDA configuration space set up");
-
-        controller.init_dma_position_buffer();
-        info!("DMA position buffer set up and running");
 
         // interview sound card
         let codecs = controller.scan_for_available_codecs();
         debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
+
+        controller.init_dma_position_buffer();
+        info!("DMA position buffer set up and running");
 
         controller.init_corb();
         controller.init_rirb();
@@ -101,7 +101,7 @@ impl IntelHDAudioDevice {
         stream.run();
     }
 
-    fn connect_interrupt_line(interrupt_line: InterruptLine) {
+    fn connect_device_to_apic(interrupt_line: InterruptLine) {
         const X86_CPU_EXCEPTION_OFFSET: u8 = 32;
         let interrupt_vector = InterruptVector::try_from(X86_CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
         interrupt_dispatcher().assign(interrupt_vector, Box::new(IHDAInterruptHandler::default()));
