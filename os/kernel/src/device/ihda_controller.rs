@@ -1270,17 +1270,17 @@ impl CorbSize {
 
 #[derive(Debug, Getters)]
 struct RingbufferCapability {
-    support_two_entries: bool,
-    support_sixteen_entries: bool,
-    support_two_hundred_fifty_six_entries: bool,
+    support_2_entries: bool,
+    support_16_entries: bool,
+    support_256_entries: bool,
 }
 
 impl RingbufferCapability {
     fn new(support_two_entries: bool, support_sixteen_entries: bool, support_two_hundred_fifty_six_entries: bool) -> Self {
         Self {
-            support_two_entries,
-            support_sixteen_entries,
-            support_two_hundred_fifty_six_entries,
+            support_2_entries: support_two_entries,
+            support_16_entries: support_sixteen_entries,
+            support_256_entries: support_two_hundred_fifty_six_entries,
         }
     }
 }
@@ -1436,6 +1436,8 @@ pub struct Stream<'a> {
     id: u8,
 }
 
+// A Stream shoudln't live longer than the StreamDescriptorRegisters, through which it gets controlled
+// This gets expressed by the lifetime specifier 'a
 impl<'a> Stream<'a> {
 
     fn new(
@@ -1499,7 +1501,7 @@ impl<'a> Stream<'a> {
         self.sd_registers.set_stream_run_bit();
     }
 
-    fn stop(&self) {
+    pub fn stop(&self) {
         self.sd_registers.clear_stream_run_bit();
     }
 
