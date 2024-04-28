@@ -12,13 +12,13 @@ const MAX_AMPLIFIER_GAIN: u8 = u8::MAX;
 
 #[derive(Clone, Copy, Debug, Getters)]
 pub struct NodeAddress {
-    codec_address: u8,
+    codec_address: CodecAddress,
     node_id: u8,
 }
 
 impl NodeAddress {
-    pub fn new(codec_address: u8, node_id: u8) -> Self {
-        if codec_address >= MAX_AMOUNT_OF_CODECS { panic!("IHDA only supports up to {} codecs!", MAX_AMOUNT_OF_CODECS) };
+    pub fn new(codec_address: CodecAddress, node_id: u8) -> Self {
+        if codec_address.codec_address >= MAX_AMOUNT_OF_CODECS { panic!("IHDA only supports up to {} codecs!", MAX_AMOUNT_OF_CODECS) };
         NodeAddress {
             codec_address,
             node_id,
@@ -26,16 +26,35 @@ impl NodeAddress {
     }
 }
 
+#[derive(Clone, Copy, Debug, Getters)]
+pub struct CodecAddress {
+    codec_address: u8,
+}
+
+impl CodecAddress {
+    pub fn new(codec_address: u8) -> Self {
+        if codec_address >= MAX_AMOUNT_OF_CODECS { panic!("IHDA only supports up to {} codecs!", MAX_AMOUNT_OF_CODECS) };
+        CodecAddress {
+            codec_address,
+        }
+    }
+}
+
 #[derive(Debug, Getters)]
 pub struct Codec {
-    codec_address: u8,
+    codec_address: CodecAddress,
     vendor_id: VendorIdResponse,
     revision_id: RevisionIdResponse,
     function_groups: Vec<FunctionGroup>
 }
 
 impl Codec {
-    pub fn new(codec_address: u8, vendor_id: VendorIdResponse, revision_id: RevisionIdResponse, function_groups: Vec<FunctionGroup>) -> Self {
+    pub fn new(
+        codec_address: CodecAddress,
+        vendor_id: VendorIdResponse,
+        revision_id: RevisionIdResponse,
+        function_groups: Vec<FunctionGroup>
+    ) -> Self {
         Codec {
             codec_address,
             vendor_id,
@@ -61,7 +80,7 @@ pub struct FunctionGroup {
 
 impl FunctionGroup {
     pub fn new(
-        address: NodeAddress,
+        function_group_node_address: NodeAddress,
         function_group_type: FunctionGroupTypeResponse,
         audio_function_group_caps: AudioFunctionGroupCapabilitiesResponse,
         sample_size_rate_caps: SampleSizeRateCAPsResponse,
@@ -73,7 +92,7 @@ impl FunctionGroup {
         widgets: Vec<Widget>
     ) -> Self {
         FunctionGroup {
-            function_group_node_address: address,
+            function_group_node_address,
             function_group_type,
             audio_function_group_caps,
             sample_size_rate_caps,
@@ -118,7 +137,17 @@ impl FunctionGroup {
         pin_widgets_connected_to_jack
     }
 
-    pub fn get_predecessor(&self, widget: &Widget) -> Option<&Widget> {
+    pub fn find_widget_path_for_line_out_playback(&self) -> Vec<&Widget> {
+        let mut widgets_on_path = Vec::new();
+        let mut widget = Some(*self.find_line_out_pin_widgets_connected_to_jack().get(0).unwrap());
+        while widget.is_some() {
+            widgets_on_path.push(widget.unwrap());
+            widget = self.get_predecessor(widget.unwrap());
+        }
+        widgets_on_path
+    }
+
+    fn get_predecessor(&self, widget: &Widget) -> Option<&Widget> {
         let connection_list_entries = match widget.widget_info() {
             WidgetInfoContainer::AudioOutputConverter(_, _, _, _, _) => { None }
             WidgetInfoContainer::AudioInputConverter(_, _, _, _, _, _) => { None }
@@ -142,16 +171,6 @@ impl FunctionGroup {
 
         None
     }
-
-    pub fn find_widget_path_for_line_out_playback(&self) -> Vec<&Widget> {
-        let mut widgets_on_path = Vec::new();
-        let mut widget = Some(*self.find_line_out_pin_widgets_connected_to_jack().get(0).unwrap());
-        while widget.is_some() {
-            widgets_on_path.push(widget.unwrap());
-            widget = self.get_predecessor(widget.unwrap());
-        }
-        widgets_on_path
-    }
 }
 
 #[derive(Debug, Getters)]
@@ -162,7 +181,11 @@ pub struct Widget {
 }
 
 impl Widget {
-    pub fn new(address: NodeAddress, audio_widget_capabilities: AudioWidgetCapabilitiesResponse, widget_info: WidgetInfoContainer) -> Self {
+    pub fn new(
+        address: NodeAddress,
+        audio_widget_capabilities: AudioWidgetCapabilitiesResponse,
+        widget_info: WidgetInfoContainer
+    ) -> Self {
         Widget {
             address,
             audio_widget_capabilities,
@@ -286,14 +309,14 @@ impl Command {
     }
 
     fn command_with_12bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u8) -> u32 {
-        (*node_address.codec_address() as u32) << 28
+        (node_address.codec_address().codec_address as u32) << 28
             | (*node_address.node_id() as u32) << 20
             | (verb_id as u32) << 8
             | payload as u32
     }
 
     fn command_with_4bit_identifier_verb(node_address: &NodeAddress, verb_id: u16, payload: u16) -> u32 {
-        (*node_address.codec_address() as u32) << 28
+        (node_address.codec_address().codec_address as u32) << 28
             | (*node_address.node_id() as u32) << 20
             | (verb_id as u32) << 16
             | payload as u32
@@ -687,7 +710,7 @@ pub enum Response {
     EAPDBTLEnable(EAPDBTLEnableResponse),
     ConfigurationDefault(ConfigurationDefaultResponse),
     ConverterChannelCount(ConverterChannelCountResponse),
-    SetInfo,
+    Zeros,
 }
 
 impl Response {
@@ -714,21 +737,21 @@ impl Response {
                 }
             }
             Command::GetConnectionSelect(..) => Response::ConnectionSelect(ConnectionSelectResponse::new(response)),
-            Command::SetConnectionSelect(..) => Response::SetInfo,
+            Command::SetConnectionSelect(..) => Response::Zeros,
             Command::GetConnectionListEntry(..) => Response::ConnectionListEntry(ConnectionListEntryResponse::new(response)),
             Command::GetAmplifierGainMute(..) => Response::AmplifierGainMute(AmplifierGainMuteResponse::new(response)),
-            Command::SetAmplifierGainMute(..) => Response::SetInfo,
+            Command::SetAmplifierGainMute(..) => Response::Zeros,
             Command::GetStreamFormat(..) => Response::StreamFormat(StreamFormatResponse::new(response)),
-            Command::SetStreamFormat(..) => Response::SetInfo,
+            Command::SetStreamFormat(..) => Response::Zeros,
             Command::GetChannelStreamId(..) => Response::ChannelStreamId(ChannelStreamIdResponse::new(response)),
-            Command::SetChannelStreamId(..) => Response::SetInfo,
+            Command::SetChannelStreamId(..) => Response::Zeros,
             Command::GetPinWidgetControl(..) => Response::PinWidgetControl(PinWidgetControlResponse::new(response)),
-            Command::SetPinWidgetControl(..) => Response::SetInfo,
+            Command::SetPinWidgetControl(..) => Response::Zeros,
             Command::GetEAPDBTLEnable(..) => Response::EAPDBTLEnable(EAPDBTLEnableResponse::new(response)),
-            Command::SetEAPDBTLEnable(..) => Response::SetInfo,
+            Command::SetEAPDBTLEnable(..) => Response::Zeros,
             Command::GetConfigurationDefault(..) => Response::ConfigurationDefault(ConfigurationDefaultResponse::new(response)),
             Command::GetConverterChannelCount(..) => Response::ConverterChannelCount(ConverterChannelCountResponse::new(response)),
-            Command::SetConverterChannelCount(..) => Response::SetInfo,
+            Command::SetConverterChannelCount(..) => Response::Zeros,
         }
     }
 }

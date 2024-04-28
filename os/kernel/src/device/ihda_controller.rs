@@ -14,7 +14,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, WidgetInfoContainer, Widget, WidgetType, BitsPerSample, StreamType, StreamFormatResponse};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, WidgetInfoContainer, Widget, WidgetType, BitsPerSample, StreamType, StreamFormatResponse, CodecAddress};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::memory::PAGE_SIZE;
@@ -923,7 +923,7 @@ impl Controller {
         self.corbrp.dump();
         self.rirbwp.dump();
 
-        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(0, 0), VendorId).as_u32()); }
+        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
         // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
 
         // debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
@@ -1052,6 +1052,7 @@ impl Controller {
 
         for codec_address in 0..MAX_AMOUNT_OF_CODECS {
             if self.wakests().is_set(codec_address) {
+                let codec_address = CodecAddress::new(codec_address);
                 let root_node_addr = NodeAddress::new(codec_address, 0);
                 let vendor_id = VendorIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, VendorId))).unwrap();
                 let revision_id = RevisionIdResponse::try_from(self.immediate_command(GetParameter(root_node_addr, RevisionId))).unwrap();
