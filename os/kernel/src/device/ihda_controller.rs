@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 use core::fmt::LowerHex;
+use core::ops::BitAnd;
 use core::ptr::NonNull;
 use log::debug;
 use num_traits::int::PrimInt;
@@ -13,7 +14,7 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::VirtAddr;
 use crate::device::pit::Timer;
 use crate::{memory, process_manager, timer};
-use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, WidgetInfoContainer, Widget, WidgetType, StreamFormat};
+use crate::device::ihda_codec::{AmpCapabilitiesResponse, AudioFunctionGroupCapabilitiesResponse, AudioWidgetCapabilitiesResponse, Codec, Command, ConfigurationDefaultResponse, ConnectionListEntryResponse, ConnectionListLengthResponse, FunctionGroup, FunctionGroupTypeResponse, GetConnectionListEntryPayload, GPIOCountResponse, MAX_AMOUNT_OF_CODECS, NodeAddress, PinCapabilitiesResponse, PinWidgetControlResponse, ProcessingCapabilitiesResponse, RawResponse, Response, RevisionIdResponse, SampleSizeRateCAPsResponse, SetAmplifierGainMutePayload, SetAmplifierGainMuteSide, SetAmplifierGainMuteType, SetChannelStreamIdPayload, SetPinWidgetControlPayload, SetStreamFormatPayload, SubordinateNodeCountResponse, SupportedPowerStatesResponse, SupportedStreamFormatsResponse, VendorIdResponse, WidgetInfoContainer, Widget, WidgetType, BitsPerSample, StreamType, StreamFormatResponse};
 use crate::device::ihda_codec::Command::{GetConfigurationDefault, GetConnectionListEntry, GetParameter, GetPinWidgetControl, SetAmplifierGainMute, SetChannelStreamId, SetPinWidgetControl, SetStreamFormat};
 use crate::device::ihda_codec::Parameter::{AudioFunctionGroupCapabilities, AudioWidgetCapabilities, ConnectionListLength, FunctionGroupType, GPIOCount, InputAmpCapabilities, OutputAmpCapabilities, PinCapabilities, ProcessingCapabilities, RevisionId, SampleSizeRateCAPs, SubordinateNodeCount, SupportedPowerStates, SupportedStreamFormats, VendorId};
 use crate::memory::PAGE_SIZE;
@@ -1219,7 +1220,14 @@ impl Controller {
                 self.immediate_command(SetChannelStreamId(*widget.address(), SetChannelStreamIdPayload::new(0, *stream.id())));
 
                 // set stream format
-                self.immediate_command(SetStreamFormat(*widget.address(), SetStreamFormatPayload::new(*stream.stream_format())));
+                let payload = SetStreamFormatPayload::new(
+                    *stream.stream_format().number_of_channels(),
+                    *stream.stream_format().bits_per_sample(),
+                    *stream.stream_format().sample_base_rate_divisor(),
+                    *stream.stream_format().sample_base_rate_multiple(),
+                    *stream.stream_format().sample_base_rate(),
+                    *stream.stream_format().stream_type());
+                self.immediate_command(SetStreamFormat(*widget.address(), payload));
             }
             WidgetType::AudioInput => {}
             WidgetType::AudioMixer => {
@@ -1424,6 +1432,113 @@ impl CyclicBuffer {
         for (index, sample) in samples.iter().enumerate() {
             buffer.write_sample_to_buffer(*sample, index as u64)
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Getters)]
+pub struct StreamFormat {
+    number_of_channels: u8,
+    bits_per_sample: BitsPerSample,
+    sample_base_rate_divisor: u8,
+    sample_base_rate_multiple: u8,
+    sample_base_rate: u16,
+    stream_type: StreamType,
+}
+
+impl StreamFormat {
+    fn new(
+        number_of_channels: u8,
+        bits_per_sample: BitsPerSample,
+        sample_base_rate_divisor: u8,
+        sample_base_rate_multiple: u8,
+        sample_base_rate: u16,
+        stream_type: StreamType,
+    ) -> Self {
+        Self {
+            number_of_channels,
+            bits_per_sample,
+            sample_base_rate_divisor,
+            sample_base_rate_multiple,
+            sample_base_rate,
+            stream_type,
+        }
+    }
+
+    fn from_u16(raw_value: u16) -> Self {
+        let sample_base_rate_multiple = (raw_value >> 11).bitand(0b111) as u8 + 1;
+        if sample_base_rate_multiple > 4 {
+            panic!("Unsupported sample rate base multiple, see table 53 in section 3.7.1: Stream Format Structure of the specification");
+        }
+        let number_of_channels = (raw_value.bitand(0xF) as u8) + 1;
+        let bits_per_sample = match (raw_value >> 4).bitand(0b111) {
+            0b000 => BitsPerSample::Eight,
+            0b001 => BitsPerSample::Sixteen,
+            0b010 => BitsPerSample::Twenty,
+            0b011 => BitsPerSample::Twentyfour,
+            0b100 => BitsPerSample::Thirtytwo,
+            // 0b101 to 0b111 reserved
+            _ => panic!("Unsupported bit depth, see table 53 in section 3.7.1: Stream Format Structure of the specification")
+        };
+        let sample_base_rate_divisor = (raw_value >> 8).bitand(0b111) as u8 + 1;
+        let sample_base_rate = if ((raw_value >> 14) | 1) != 0 { 44100 } else { 48000 };
+        let stream_type = if ((raw_value >> 15) | 1) != 0 { StreamType::NonPCM } else { StreamType::PCM };
+
+        Self {
+            number_of_channels,
+            bits_per_sample,
+            sample_base_rate_divisor,
+            sample_base_rate_multiple,
+            sample_base_rate,
+            stream_type
+        }
+    }
+
+    fn as_u16(&self) -> u16 {
+        let number_of_channels = self.number_of_channels - 1;
+        let bits_per_sample = match self.bits_per_sample {
+            BitsPerSample::Eight => 0b000,
+            BitsPerSample::Sixteen => 0b001,
+            BitsPerSample::Twenty => 0b010,
+            BitsPerSample::Twentyfour => 0b011,
+            BitsPerSample::Thirtytwo => 0b100,
+        };
+        let sample_base_rate_divisor = self.sample_base_rate_divisor - 1;
+        let sample_base_rate_multiple = self.sample_base_rate_multiple - 1;
+        let sample_base_rate = if self.sample_base_rate == 44100 { 1 } else { 0 };
+        let stream_type = match self.stream_type {
+            StreamType::PCM => 0,
+            StreamType::NonPCM => 1,
+        };
+        (stream_type as u16) << 15
+            | (sample_base_rate as u16) << 14
+            | (sample_base_rate_multiple as u16) << 11
+            | (sample_base_rate_divisor as u16) << 8
+            | (bits_per_sample as u16) << 4
+            | number_of_channels as u16
+    }
+
+    fn from_response(response: StreamFormatResponse) -> Self {
+        Self {
+            number_of_channels: *response.number_of_channels(),
+            bits_per_sample: match response.bits_per_sample() {
+                BitsPerSample::Eight => BitsPerSample::Eight,
+                BitsPerSample::Sixteen => BitsPerSample::Sixteen,
+                BitsPerSample::Twenty => BitsPerSample::Twenty,
+                BitsPerSample::Twentyfour => BitsPerSample::Twentyfour,
+                BitsPerSample::Thirtytwo => BitsPerSample::Thirtytwo,
+            },
+            sample_base_rate_divisor: *response.sample_base_rate_divisor(),
+            sample_base_rate_multiple: *response.sample_base_rate_multiple(),
+            sample_base_rate: *response.sample_base_rate(),
+            stream_type: match response.stream_type() {
+                StreamType::PCM => StreamType::PCM,
+                StreamType::NonPCM => StreamType::NonPCM,
+            },
+        }
+    }
+
+    pub fn stereo_48khz_16bit() -> Self {
+        Self::new(2, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM)
     }
 }
 
