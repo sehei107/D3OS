@@ -19,7 +19,7 @@ use crate::device::serial;
 use crate::device::serial::{BaudRate, ComPort, SerialPort};
 use crate::device::speaker::Speaker;
 use crate::device::terminal::Terminal;
-use crate::device::ihda_driver::IntelHDAudioDevice;
+use crate::device::ihda_api::IntelHDAudioDevice;
 use crate::memory::alloc::{AcpiHandler, KernelAllocator};
 use crate::interrupt::interrupt_dispatcher::InterruptDispatcher;
 use crate::log::Logger;

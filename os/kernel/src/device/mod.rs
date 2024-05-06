@@ -8,7 +8,7 @@ pub mod terminal;
 pub mod lfb_terminal;
 pub mod serial;
 pub mod pci;
-pub mod ihda_driver;
+pub mod ihda_api;
 mod ihda_controller;
 mod ihda_codec;
 mod ihda_pci;

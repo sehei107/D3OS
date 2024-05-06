@@ -1034,7 +1034,7 @@ impl Controller {
         Response::new(raw_response, command)
     }
 
-    pub fn setup_ihda_config_space(&self) {
+    pub fn configure(&self) {
         // set Accept Unsolicited Response Enable (UNSOL) bit
         self.clear_unsolicited_response_enable_bit();
 
@@ -1196,7 +1196,7 @@ impl Controller {
         widgets
     }
 
-    pub fn allocate_output_stream(
+    pub fn prepare_output_stream(
         &self,
         output_sound_descriptor_number: usize,
         stream_format: StreamFormat,
@@ -1214,7 +1214,7 @@ impl Controller {
                 // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
                 // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
                 // default gain value is 87
-                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 40)));
+                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 127)));
 
                 // set stream id
                 // channel number for now hard coded to 0
@@ -1536,6 +1536,10 @@ impl StreamFormat {
                 StreamType::NonPCM => StreamType::NonPCM,
             },
         }
+    }
+
+    pub fn mono_48khz_16bit() -> Self {
+        Self::new(1, BitsPerSample::Sixteen, 1, 1, 48000, StreamType::PCM)
     }
 
     pub fn stereo_48khz_16bit() -> Self {

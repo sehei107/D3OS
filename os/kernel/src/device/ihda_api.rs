@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -14,8 +12,8 @@ use crate::device::pit::Timer;
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 
 pub struct IntelHDAudioDevice {
-    pub controller: Controller,
-    pub codecs: Vec<Codec>,
+    controller: Controller,
+    codecs: Vec<Codec>,
 }
 
 unsafe impl Sync for IntelHDAudioDevice {}
@@ -47,22 +45,21 @@ impl IntelHDAudioDevice {
         info!("IHDA Controller reset complete");
 
         // the following function call is irrelevant when not using interrupts
-        controller.setup_ihda_config_space();
+        controller.configure();
         info!("IHDA configuration space set up");
-
-        // interview sound card
-        let codecs = controller.scan_for_available_codecs();
-        debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
-
-        controller.init_dma_position_buffer();
-        info!("DMA position buffer set up and running");
 
         controller.init_corb();
         controller.init_rirb();
         controller.start_corb();
         controller.start_rirb();
-
         info!("CORB and RIRB set up and running");
+
+        controller.init_dma_position_buffer();
+        info!("DMA position buffer set up and running");
+
+        // interview sound card
+        let codecs = controller.scan_for_available_codecs();
+        debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
 
         // Timer::wait(600000);
 
@@ -73,20 +70,15 @@ impl IntelHDAudioDevice {
     }
 
     pub fn demo(&self) {
-        let stream_format = StreamFormat::stereo_48khz_16bit();
+        let stream_format = StreamFormat::mono_48khz_16bit();
         let stream_id = 1;
-        let stream = &self.controller.allocate_output_stream(0, stream_format, 2, 128, stream_id);
-
-
-        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
-        let codec = self.codecs.get(0).unwrap();
-        self.controller.configure_codec_for_line_out_playback(codec, stream);
+        let stream = &self.controller.prepare_output_stream(0, stream_format, 2, 128, stream_id);
 
         // ########## write data to buffers ##########
 
         let mut saw = Vec::new();
         for i in 0u32..32768 {
-            let sample = (i%512 * 128) as u16;
+            let sample = (i%64 * 128) as u16;
             saw.push(sample);
         }
 
@@ -95,6 +87,10 @@ impl IntelHDAudioDevice {
 
         // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
         unsafe { asm!("wbinvd"); }
+
+        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
+        let codec = self.codecs.get(0).unwrap();
+        self.controller.configure_codec_for_line_out_playback(codec, stream);
 
         debug!("run in one second!");
         Timer::wait(1000);
