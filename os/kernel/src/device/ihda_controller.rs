@@ -915,17 +915,17 @@ impl Controller {
     }
 
     pub fn test_corb_and_rirb(&self) {
-        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
-        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
-        self.corbwp.dump();
-        self.corbrp.dump();
-        self.rirbwp.dump();
+        // unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
+        // self.corbwp.dump();
+        // self.corbrp.dump();
+        // self.rirbwp.dump();
 
         unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
         unsafe { ((self.corb_address() + 8) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
@@ -940,18 +940,17 @@ impl Controller {
             assert_eq!(entry_at_index_1, entry_at_index_2);
         }
 
-
-        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
-        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 2: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
-        unsafe { debug!("RIRB entry 3: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
-        self.corbwp.dump();
-        self.corbrp.dump();
-        self.rirbwp.dump();
+        // unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        // unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        // unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 2: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        // unsafe { debug!("RIRB entry 3: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
+        // self.corbwp.dump();
+        // self.corbrp.dump();
+        // self.rirbwp.dump();
     }
 
     // ########## DPLBASE and DPUBASE ##########
@@ -990,6 +989,40 @@ impl Controller {
         // see specification section 3.6.1
         let address = self.dma_position_buffer_address() + (stream_descriptor_number as u64 * (2 * DMA_POSITION_IN_BUFFER_ENTRY_SIZE_IN_BYTES));
         unsafe { (address as *mut u32).read() }
+    }
+
+    pub fn test_dma_position_buffer(&self) {
+        let stream = Stream::new(
+            self.output_stream_descriptors.get(0).unwrap(),
+            StreamFormat::stereo_48khz_16bit(),
+            2,
+            512,
+            2);
+        stream.run();
+
+        Timer::wait(100);
+
+        // for i in 0..self.number_of_output_streams_supported() {
+        //     debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
+        // }
+
+        let stream_position_a = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
+        Timer::wait(100);
+        let stream_position_b = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
+
+        // for i in 0..self.number_of_output_streams_supported() {
+        //     debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
+        // }
+
+        // only the first dma engine should be running
+        assert_ne!(stream_position_a, 0);
+        assert_ne!(stream_position_a, stream_position_b);
+        // the positions of all other dma engines should be 0
+        for i in 1..self.number_of_output_streams_supported() {
+            assert_eq!(self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32), 0);
+        }
+
+        stream.reset();
     }
 
     // ########## ICOI - Immediate Command Output Interface ##########
@@ -1418,7 +1451,6 @@ impl AudioBuffer {
     }
 
     fn demo_sawtooth_wave_mono_48khz_16bit(&self, frequency: u32) {
-        let pcm_zero = (u16::MAX / 2 ) + 1;
         let wavelength_in_samples = SAMPLE_RATE_48KHZ / frequency;
         let step_size = (u16::MAX as u32/ wavelength_in_samples) as u32;
 
@@ -1666,6 +1698,10 @@ impl<'a> Stream<'a> {
 
     pub fn stop(&self) {
         self.sd_registers.clear_stream_run_bit();
+    }
+
+    pub fn reset(&self) {
+        self.sd_registers.reset_stream();
     }
 
     pub fn demo_sawtooth_wave_mono_48khz_16bit(&self, frequency: u32) {

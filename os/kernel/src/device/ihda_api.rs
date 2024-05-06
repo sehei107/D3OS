@@ -56,13 +56,13 @@ impl IntelHDAudioDevice {
         info!("CORB and RIRB set up and running");
 
         controller.init_dma_position_buffer();
+        Timer::wait(200);
+        controller.test_dma_position_buffer();
         info!("DMA position buffer set up and running");
 
         // interview sound card
         let codecs = controller.scan_for_available_codecs();
         debug!("[{}] codec{} found", codecs.len(), if codecs.len() == 1 { "" } else { "s" });
-
-        // Timer::wait(600000);
 
         Self {
             controller,
@@ -92,7 +92,7 @@ impl IntelHDAudioDevice {
         // (for audio buffers and buffer descriptor list) were allocated with the NO_CACHE flag by the function "alloc_no_cache_dma_memory"
         unsafe { asm!("wbinvd"); }
 
-        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
+        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected for now
         let codec = self.codecs.get(0).unwrap();
         self.controller.configure_codec_for_line_out_playback(codec, stream);
 
@@ -132,11 +132,3 @@ impl IntelHDAudioDevice {
 // debug!("----------------------------------------------------------------------------------");
 
 
-// Timer::wait(2000);
-// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-// Timer::wait(2000);
-// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-// Timer::wait(2000);
-// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
-// Timer::wait(2000);
-// debug!("dma_position_in_buffer of stream descriptor [1]: {:#x}", register_interface.stream_descriptor_position_in_current_buffer(1));
