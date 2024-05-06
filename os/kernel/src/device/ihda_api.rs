@@ -56,7 +56,6 @@ impl IntelHDAudioDevice {
         info!("CORB and RIRB set up and running");
 
         controller.init_dma_position_buffer();
-        Timer::wait(200);
         controller.test_dma_position_buffer();
         info!("DMA position buffer set up and running");
 

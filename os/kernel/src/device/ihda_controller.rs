@@ -34,7 +34,8 @@ const CONTAINER_8BIT_SIZE_IN_BYTES: u32 = 1;
 const CONTAINER_16BIT_SIZE_IN_BYTES: u32 = 2;
 const CONTAINER_32BIT_SIZE_IN_BYTES: u32 = 4;
 const SAMPLE_RATE_48KHZ: u32 = 48000;
-
+const CORB_ENTRY_SIZE_IN_BYTES: u64 = 2;
+const RIRB_ENTRY_SIZE_IN_BYTES: u64 = 4;
 
 
 // representation of an IHDA register
@@ -927,17 +928,25 @@ impl Controller {
         // self.corbrp.dump();
         // self.rirbwp.dump();
 
-        unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
-        unsafe { ((self.corb_address() + 8) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
+        // place two commands in CORB
+        // CAREFUL: the very first command sent via CORB must be placed at index 1 (not index 0!), see specification, section 4.4.1
+        unsafe { ((self.corb_address() + CORB_ENTRY_SIZE_IN_BYTES) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
+        unsafe { ((self.corb_address() + (2 * CORB_ENTRY_SIZE_IN_BYTES)) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
 
+        // increment CORBWP accordingly
         self.corbwp().write(self.corbwp.read() + 2);
         Timer::wait(200);
 
         unsafe {
-            let entry_at_index_1 = ((self.corb_address() + 4) as *mut u32).read();
-            let entry_at_index_2 = ((self.corb_address() + 8) as *mut u32).read();
+            // read responses from RIRB
+            let entry_at_index_1 = ((self.rirb_address() + RIRB_ENTRY_SIZE_IN_BYTES) as *mut u64).read();
+            let entry_at_index_2 = ((self.corb_address() + (2 * RIRB_ENTRY_SIZE_IN_BYTES)) as *mut u64).read();
 
+            // as the commands sent were identical, the responses should be as well
             assert_eq!(entry_at_index_1, entry_at_index_2);
+            // as the command sent (get parameter vendor ID) was a legit command for the root node of a codec, both responses should not be 0
+            assert_ne!(entry_at_index_1, 0);
+            assert_ne!(entry_at_index_2, 0);
         }
 
         // unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
@@ -992,6 +1001,7 @@ impl Controller {
     }
 
     pub fn test_dma_position_buffer(&self) {
+        // start first output dma engine
         let stream = Stream::new(
             self.output_stream_descriptors.get(0).unwrap(),
             StreamFormat::stereo_48khz_16bit(),
@@ -1006,6 +1016,7 @@ impl Controller {
         //     debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
         // }
 
+        // monitor position of first dma engine two times with a little pause in between
         let stream_position_a = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
         Timer::wait(100);
         let stream_position_b = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
