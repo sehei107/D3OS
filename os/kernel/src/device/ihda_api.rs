@@ -52,6 +52,7 @@ impl IntelHDAudioDevice {
         controller.init_rirb();
         controller.start_corb();
         controller.start_rirb();
+        controller.test_corb_and_rirb();
         info!("CORB and RIRB set up and running");
 
         controller.init_dma_position_buffer();
@@ -85,7 +86,7 @@ impl IntelHDAudioDevice {
         // stream.write_data_to_buffer(0, &saw);
         // stream.write_data_to_buffer(1, &saw);
         // stream.demo_square_wave_mono_48khz_16bit(375);
-        stream.demo_one_buffer_saw_one_buffer_square_wave_mono_48khz_16bit(375);
+        stream.demo_sawtooth_wave_mono_48khz_16bit(375);
 
         // without this flush, there is no sound coming out of the line out jack, although all DMA pages needed for the strem
         // (for audio buffers and buffer descriptor list) were allocated with the NO_CACHE flag by the function "alloc_no_cache_dma_memory"

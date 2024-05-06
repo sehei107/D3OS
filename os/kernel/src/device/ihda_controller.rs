@@ -912,36 +912,46 @@ impl Controller {
         self.set_response_interrupt_control_bit();
         self.set_response_overrun_interrupt_control_bit();
         self.start_rirb_dma();
+    }
 
-        // CORB/RIRB demo
-
-        Timer::wait(1000);
+    pub fn test_corb_and_rirb(&self) {
         unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
         unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
         unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
         self.corbwp.dump();
         self.corbrp.dump();
         self.rirbwp.dump();
 
         unsafe { ((self.corb_address() + 4) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
-        // unsafe { ((self.corb_address() + 32) as *mut u32).write(GetParameter(audio_out_widget, OutputAmpCapabilities).as_u32()); }
+        unsafe { ((self.corb_address() + 8) as *mut u32).write(GetParameter(NodeAddress::new(CodecAddress::new(0), 0), VendorId).as_u32()); }
 
-        // debug!("VendorIdResponse from immediate command: {:?}", VendorIdResponse::try_from(self.immediate_command(GetParameter(NodeAddress::new(0, 0), VendorId))).unwrap());
-
-        self.corbwp().write(self.corbwp.read() + 1);
+        self.corbwp().write(self.corbwp.read() + 2);
         Timer::wait(200);
+
+        unsafe {
+            let entry_at_index_1 = ((self.corb_address() + 4) as *mut u32).read();
+            let entry_at_index_2 = ((self.corb_address() + 8) as *mut u32).read();
+
+            assert_eq!(entry_at_index_1, entry_at_index_2);
+        }
+
+
         unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
         unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
         unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 2: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 3: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
         self.corbwp.dump();
         self.corbrp.dump();
         self.rirbwp.dump();
-
-
-        debug!("CORB address: {:#x}", self.corb_address());
-        debug!("RIRB address: {:#x}", self.rirb_address());
     }
 
     // ########## DPLBASE and DPUBASE ##########
