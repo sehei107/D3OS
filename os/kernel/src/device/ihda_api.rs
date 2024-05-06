@@ -76,16 +76,19 @@ impl IntelHDAudioDevice {
 
         // ########## write data to buffers ##########
 
-        let mut saw = Vec::new();
-        for i in 0u32..32768 {
-            let sample = (i%64 * 128) as u16;
-            saw.push(sample);
-        }
+        // let mut saw = Vec::new();
+        // for i in 0u32..32768 {
+        //     let sample = (i%64 * 128) as u16;
+        //     saw.push(sample);
+        // }
+        //
+        // stream.write_data_to_buffer(0, &saw);
+        // stream.write_data_to_buffer(1, &saw);
+        // stream.demo_square_wave_mono_48khz_16bit(375);
+        stream.demo_one_buffer_saw_one_buffer_square_wave_mono_48khz_16bit(375);
 
-        stream.write_data_to_buffer(0, &saw);
-        stream.write_data_to_buffer(1, &saw);
-
-        // without this flush, there is no sound coming out of the line out jack, although all DMA pages were allocated with the NO_CACHE flag...
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages needed for the strem
+        // (for audio buffers and buffer descriptor list) were allocated with the NO_CACHE flag by the function "alloc_no_cache_dma_memory"
         unsafe { asm!("wbinvd"); }
 
         // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected at the moment
