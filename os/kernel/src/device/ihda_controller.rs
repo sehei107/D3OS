@@ -940,7 +940,7 @@ impl Controller {
         unsafe {
             // read responses from RIRB
             let entry_at_index_1 = ((self.rirb_address() + RIRB_ENTRY_SIZE_IN_BYTES) as *mut u64).read();
-            let entry_at_index_2 = ((self.corb_address() + (2 * RIRB_ENTRY_SIZE_IN_BYTES)) as *mut u64).read();
+            let entry_at_index_2 = ((self.rirb_address() + (2 * RIRB_ENTRY_SIZE_IN_BYTES)) as *mut u64).read();
 
             // as the commands sent were identical, the responses should be as well
             assert_eq!(entry_at_index_1, entry_at_index_2);
