@@ -949,17 +949,17 @@ impl Controller {
             assert_ne!(entry_at_index_2, 0);
         }
 
-        // unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 2: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 3: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
-        // self.corbwp.dump();
-        // self.corbrp.dump();
-        // self.rirbwp.dump();
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 2: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 3: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
+        self.corbwp.dump();
+        self.corbrp.dump();
+        self.rirbwp.dump();
     }
 
     // ########## DPLBASE and DPUBASE ##########
@@ -1012,18 +1012,18 @@ impl Controller {
 
         Timer::wait(100);
 
-        // for i in 0..self.number_of_output_streams_supported() {
-        //     debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
-        // }
+        for i in 0..self.number_of_output_streams_supported() {
+            debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
+        }
 
         // monitor position of first dma engine two times with a little pause in between
         let stream_position_a = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
         Timer::wait(100);
         let stream_position_b = self.stream_descriptor_position_in_current_buffer(self.number_of_input_streams_supported() as u32);
 
-        // for i in 0..self.number_of_output_streams_supported() {
-        //     debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
-        // }
+        for i in 0..self.number_of_output_streams_supported() {
+            debug!("dma_position_in_buffer of output stream descriptor [{}]: {:#x}", i, self.stream_descriptor_position_in_current_buffer((self.number_of_input_streams_supported() + i) as u32));
+        }
 
         // only the first dma engine should be running
         assert_ne!(stream_position_a, 0);
@@ -1759,115 +1759,122 @@ impl<'a> Stream<'a> {
 
 
 
-// #[derive(Clone, Debug)]
-// enum BitDepth {
-//     BitDepth8Bit,
-//     BitDepth16Bit,
-//     BitDepth20Bit,
-//     BitDepth24Bit,
-//     BitDepth32Bit,
-// }
-//
-// #[derive(Clone, Debug)]
-// enum Sample {
-//     Sample8Bit(u8),
-//     Sample16Bit(u16),
-//     Sample20Bit(u32),
-//     Sample24Bit(u32),
-//     Sample32Bit(u32),
-// }
-//
-// #[derive(Clone, Debug, Getters)]
-// struct SampleContainer {
-//     value: Sample,
-// }
-//
-// impl SampleContainer {
-//     fn new(value: u32, bit_depth: BitDepth) -> Self {
-//         match bit_depth {
-//             BitDepth::BitDepth8Bit => {
-//                 if value > 2.pow(8) - 1 {
-//                     panic!("Trying to build sample with value greater than bit depth")
-//                 }
-//                 Self {
-//                     value: Sample8Bit(value as u8),
-//                 }
-//             }
-//             BitDepth::BitDepth16Bit => {
-//                 if value > 2.pow(16) - 1 {
-//                     panic!("Trying to build sample with value greater than bit depth")
-//                 }
-//                 Self {
-//                     value: Sample16Bit(value as u16),
-//                 }
-//             }
-//             BitDepth::BitDepth20Bit => {
-//                 if value > 2.pow(20) - 1 {
-//                     panic!("Trying to build sample with value greater than bit depth")
-//                 }
-//                 Self {
-//                     value: Sample20Bit(value),
-//                 }
-//             }
-//             BitDepth::BitDepth24Bit => {
-//                 if value > 2.pow(24) - 1 {
-//                     panic!("Trying to build sample with value greater than bit depth")
-//                 }
-//                 Self {
-//                     value: Sample24Bit(value),
-//                 }
-//             }
-//             BitDepth::BitDepth32Bit => {
-//                 if value > 2.pow(32) - 1 {
-//                     panic!("Trying to build sample with value greater than bit depth")
-//                 }
-//                 Self {
-//                     value: Sample32Bit(value)
-//                 }
-//             }
-//         }
-//     }
-//
-//     fn length_in_bytes(&self) -> usize {
-//         match self.value {
-//             Sample8Bit(_) => 1,
-//             Sample16Bit(_) => 2,
-//             _ => 4,
-//         }
-//     }
-//
-//     fn as_unsigned<T: PrimInt>(&self) -> T {
-//         match self.value {
-//             Sample8Bit(value) => { T::from(value).unwrap() }
-//             Sample16Bit(value) => { T::from(value).unwrap() }
-//             Sample20Bit(value) => { T::from(value).unwrap() }
-//             Sample24Bit(value) => { T::from(value).unwrap() }
-//             Sample32Bit(value) => { T::from(value).unwrap() }
-//         }
-//     }
-// }
-//
-// #[derive(Clone, Debug, Getters)]
-// struct Package {
-//     samples: Vec<SampleContainer>,
-// }
-//
-// impl Package {
-//     fn new(samples: Vec<SampleContainer>) -> Self {
-//         Self {
-//             samples
-//         }
-//     }
-//
-//     fn length_in_bytes(&self) -> u32 {
-//         (self.samples.len()  * self.samples().get(0).unwrap().length_in_bytes()) as u32
-//     }
-// }
+/*
+
+// The following definitions might be useful when implementing representations for the way that samples get packed inside a buffer.
+// This should be done as one of the next expansions, as right now, it is quite hard to write data in a PCM format to the buffers.
+// See specification, section 4.5.1 Stream Data In Memory
+
+#[derive(Clone, Debug)]
+enum BitDepth {
+    BitDepth8Bit,
+    BitDepth16Bit,
+    BitDepth20Bit,
+    BitDepth24Bit,
+    BitDepth32Bit,
+}
+
+#[derive(Clone, Debug)]
+enum Sample {
+    Sample8Bit(u8),
+    Sample16Bit(u16),
+    Sample20Bit(u32),
+    Sample24Bit(u32),
+    Sample32Bit(u32),
+}
+
+#[derive(Clone, Debug, Getters)]
+struct SampleContainer {
+    value: Sample,
+}
+
+impl SampleContainer {
+    fn new(value: u32, bit_depth: BitDepth) -> Self {
+        match bit_depth {
+            BitDepth::BitDepth8Bit => {
+                if value > 2.pow(8) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample8Bit(value as u8),
+                }
+            }
+            BitDepth::BitDepth16Bit => {
+                if value > 2.pow(16) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample16Bit(value as u16),
+                }
+            }
+            BitDepth::BitDepth20Bit => {
+                if value > 2.pow(20) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample20Bit(value),
+                }
+            }
+            BitDepth::BitDepth24Bit => {
+                if value > 2.pow(24) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample24Bit(value),
+                }
+            }
+            BitDepth::BitDepth32Bit => {
+                if value > 2.pow(32) - 1 {
+                    panic!("Trying to build sample with value greater than bit depth")
+                }
+                Self {
+                    value: Sample32Bit(value)
+                }
+            }
+        }
+    }
+
+    fn length_in_bytes(&self) -> usize {
+        match self.value {
+            Sample8Bit(_) => 1,
+            Sample16Bit(_) => 2,
+            _ => 4,
+        }
+    }
+
+    fn as_unsigned<T: PrimInt>(&self) -> T {
+        match self.value {
+            Sample8Bit(value) => { T::from(value).unwrap() }
+            Sample16Bit(value) => { T::from(value).unwrap() }
+            Sample20Bit(value) => { T::from(value).unwrap() }
+            Sample24Bit(value) => { T::from(value).unwrap() }
+            Sample32Bit(value) => { T::from(value).unwrap() }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Getters)]
+struct Package {
+    samples: Vec<SampleContainer>,
+}
+
+impl Package {
+    fn new(samples: Vec<SampleContainer>) -> Self {
+        Self {
+            samples
+        }
+    }
+
+    fn length_in_bytes(&self) -> u32 {
+        (self.samples.len()  * self.samples().get(0).unwrap().length_in_bytes()) as u32
+    }
+}
+*/
 
 
 
 
-
+// This function is out of place here, as the functionality of allocating memory with the NO_CACHE flag should be implemented in a memory module of the D3OS
 fn alloc_no_cache_dma_memory(frame_count: u32) -> PhysFrameRange {
     let phys_frame_range = memory::physical::alloc(frame_count as usize);
 

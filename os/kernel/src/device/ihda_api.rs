@@ -74,20 +74,9 @@ impl IntelHDAudioDevice {
         let stream_id = 1;
         let stream = &self.controller.prepare_output_stream(0, stream_format, 2, 128, stream_id);
 
-        // ########## write data to buffers ##########
+        stream.demo_sawtooth_wave_mono_48khz_16bit(750);
 
-        // let mut saw = Vec::new();
-        // for i in 0u32..32768 {
-        //     let sample = (i%64 * 128) as u16;
-        //     saw.push(sample);
-        // }
-        //
-        // stream.write_data_to_buffer(0, &saw);
-        // stream.write_data_to_buffer(1, &saw);
-        // stream.demo_square_wave_mono_48khz_16bit(375);
-        stream.demo_sawtooth_wave_mono_48khz_16bit(375);
-
-        // without this flush, there is no sound coming out of the line out jack, although all DMA pages needed for the strem
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages used for the stream
         // (for audio buffers and buffer descriptor list) were allocated with the NO_CACHE flag by the function "alloc_no_cache_dma_memory"
         unsafe { asm!("wbinvd"); }
 
@@ -112,22 +101,3 @@ impl IntelHDAudioDevice {
         */
     }
 }
-
-// ########## debugging sandbox ##########
-// let connection_list_entries_mixer11 = ConnectionListEntryResponse::try_from(register_interface.send_command(&GetConnectionListEntry(NodeAddress::new(0, 11), GetConnectionListEntryPayload::new(0)))).unwrap();
-// debug!("connection list entries mixer widget: {:?}", connection_list_entries_mixer11);
-
-// debug!("----------------------------------------------------------------------------------");
-// sd_registers1.sdctl().dump();
-// sd_registers1.sdsts().dump();
-// sd_registers1.sdlpib().dump();
-// sd_registers1.sdcbl().dump();
-// sd_registers1.sdlvi().dump();
-// sd_registers1.sdfifow().dump();
-// sd_registers1.sdfifod().dump();
-// sd_registers1.sdfmt().dump();
-// sd_registers1.sdbdpl().dump();
-// sd_registers1.sdbdpu().dump();
-// debug!("----------------------------------------------------------------------------------");
-
-

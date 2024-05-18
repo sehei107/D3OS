@@ -33,8 +33,6 @@ pub fn find_ihda_device(pci_bus: &PciBus) -> &EndpointHeader {
         A universal device selection algorithm would require a better overview over existing vendors and devices.
         The hda_intel.c from the IHDA linux driver for example gets this overview through more than 300 lines of hard coded
         vendor id / device id combinations, so that the driver can explicitly filter devices by these ids.
-        As this complexity can not be handled within the context of a bachelor thesis,
-        the device selection stays hard coded for now and probably needs to be adjusted when booting on a different machine.
         */
         if qemu_cfg::is_available() {
             ihda_devices[0]
@@ -107,3 +105,7 @@ pub fn map_mmio_space(pci_bus: &PciBus, ihda_device: &EndpointHeader) -> VirtAdd
 
     VirtAddr::new(mmio_base_address)
 }
+
+// Probably all functionality in this module could be useful in other contexts than initialising an ihda device.
+// So it should be considered to move the functions above to the impl-block of the struct PciBus in pci.rs instead.
+// The whole module ihda_pci.rs would then become obsolete.
