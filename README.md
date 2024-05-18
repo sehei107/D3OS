@@ -1,5 +1,6 @@
-# D3OS
-A new research operating system, developed by the [operating systems group](https://www.cs.hhu.de/en/research-groups/operating-systems.html) of the department of computer science at [Heinrich Heine University Düsseldorf](https://www.hhu.de)
+# D3OS plus Intel HD Audio sound card driver
+The [Distributed Data-Driven OS (D3OS)](https://github.com/hhu-bsinfo/D3OS) is a new research operating system, developed by the [operating systems group](https://www.cs.hhu.de/en/research-groups/operating-systems.html) of the department of computer science at [Heinrich Heine University Düsseldorf](https://www.hhu.de).
+In the context of his bachelor thesis, the D3OS was expanded with an Intel HD Audio sound card driver by Sebastian Heidelberg.
 
 ## Requirements
 
