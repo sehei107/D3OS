@@ -1470,18 +1470,18 @@ impl AudioBuffer {
         unsafe { (address as *mut u16).read() }
     }
 
-    fn write_16bit_sample_to_buffer(&self, sample: u16, index: u64) {
+    fn write_16bit_sample_to_buffer(&self, sample: i16, index: u64) {
         // CAREFUL: at the moment, there is no check if the index exists in the buffer
         let address = self.start_address + (index * (CONTAINER_16BIT_SIZE_IN_BYTES as u64));
-        unsafe { (address as *mut u16).write(sample); }
+        unsafe { (address as *mut i16).write(sample); }
     }
 
     fn demo_sawtooth_wave_mono_48khz_16bit(&self, frequency: u32) {
         let wavelength_in_samples = SAMPLE_RATE_48KHZ / frequency;
-        let step_size = (u16::MAX as u32/ wavelength_in_samples) as u32;
+        let step_size = (u16::MAX as u32 + 1) / wavelength_in_samples;
 
         for i in 0..(self.length_in_bytes / CONTAINER_16BIT_SIZE_IN_BYTES) {
-            let sample = ((i % wavelength_in_samples) * step_size) as u16;
+            let sample = (i16::MIN as i32 + ((i % wavelength_in_samples) * step_size) as i32) as i16;
             self.write_16bit_sample_to_buffer(sample, i as u64);
         }
     }
@@ -1495,9 +1495,9 @@ impl AudioBuffer {
             for i in 0..wave_length_in_samples {
                 let sample;
                 if i < (wave_length_in_samples / 2) {
-                    sample = 100;
+                    sample = i16::MIN;
                 } else {
-                    sample = 65000;
+                    sample = i16::MAX;
                 }
                 self.write_16bit_sample_to_buffer(sample, ((wave_form * wave_length_in_samples) + i) as u64);
             }
@@ -1528,7 +1528,7 @@ impl CyclicBuffer {
         }
     }
 
-    fn write_16bit_samples_to_buffer(&self, buffer_index: usize, samples: &Vec<u16>) {
+    fn write_16bit_samples_to_buffer(&self, buffer_index: usize, samples: &Vec<i16>) {
         let buffer = self.audio_buffers().get(buffer_index).unwrap();
         for (index, sample) in samples.iter().enumerate() {
             // CAREFUL: at the moment, this write might leak out of the buffer if more samples get written than the buffer can store
@@ -1714,7 +1714,7 @@ impl<'a> Stream<'a> {
     //     self.cyclic_buffer().write_samples_to_buffer(buffer_index, samples);
     // }
 
-    pub fn write_data_to_buffer(&self, buffer_index: usize, samples: &Vec<u16>) {
+    pub fn write_data_to_buffer(&self, buffer_index: usize, samples: &Vec<i16>) {
         self.cyclic_buffer().write_16bit_samples_to_buffer(buffer_index, samples);
     }
 
