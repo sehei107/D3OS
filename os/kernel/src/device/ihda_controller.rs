@@ -916,17 +916,17 @@ impl Controller {
     }
 
     pub fn test_corb_and_rirb(&self) {
-        // unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
-        // unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
-        // unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
-        // unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
-        // self.corbwp.dump();
-        // self.corbrp.dump();
-        // self.rirbwp.dump();
+        unsafe { debug!("CORB entry 0: {:#x}", (self.corb_address() as *mut u32).read()); }
+        unsafe { debug!("CORB entry 1: {:#x}", ((self.corb_address() + 4) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 2: {:#x}", ((self.corb_address() + 8) as *mut u32).read()); }
+        unsafe { debug!("CORB entry 3: {:#x}", ((self.corb_address() + 12) as *mut u32).read()); }
+        unsafe { debug!("RIRB entry 0: {:#x}", (self.rirb_address() as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 8) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 16) as *mut u64).read()); }
+        unsafe { debug!("RIRB entry 1: {:#x}", ((self.rirb_address() + 24) as *mut u64).read()); }
+        self.corbwp.dump();
+        self.corbrp.dump();
+        self.rirbwp.dump();
 
         // place two commands in CORB
         // CAREFUL: the very first command sent via CORB must be placed at index 1 (not index 0!), see specification, section 4.4.1
@@ -1307,10 +1307,25 @@ impl Controller {
     }
 
     pub fn configure_codec_for_line_out_playback(&self, codec: &Codec, stream: &Stream) {
-        let widgets_on_output_path = codec.function_groups().get(0).unwrap().find_widget_path_for_line_out_playback();
+        let vendor_id = *codec.vendor_id().vendor_id();
+        let device_id = *codec.vendor_id().device_id();
+        match vendor_id {
+            0x10EC => match device_id {
+                0x280 => {
+                    let widgets_on_output_path = codec.function_groups().get(0).unwrap().find_widget_path_for_line_out_playback();
 
-        for widget in widgets_on_output_path {
-            self.configure_widget_for_line_out_playback(widget, stream);
+                    for widget in widgets_on_output_path {
+                        self.configure_widget_for_line_out_playback(widget, stream);
+                    }
+                }
+                _ => {
+                    panic!("Codec from vendor with vendor id {:#x} and device_id {:#x} not supported", vendor_id, device_id)
+                }
+            }
+
+            _ => {
+                panic!("Codecs from vendor with vendor id {:#x} not supported", vendor_id)
+            }
         }
     }
 }
