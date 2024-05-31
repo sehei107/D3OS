@@ -1269,7 +1269,7 @@ impl Controller {
                 // set gain/mute for audio output converter widget (observation: audio output converter widget only owns output amp; mute stays false, no matter what value gets set, but gain reacts to set commands)
                 // careful: the gain register is only 7 bits long (bits [6:0]), so the max gain value is 127; writing higher numbers into the u8 for gain will overwrite the mute bit at position 7
                 // default gain value is 87
-                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 60)));
+                self.immediate_command(SetAmplifierGainMute(*widget.address(), SetAmplifierGainMutePayload::new(SetAmplifierGainMuteType::Both, SetAmplifierGainMuteSide::Both, 0, false, 100)));
 
                 // set stream id
                 // channel number for now hard coded to 0
@@ -1754,7 +1754,13 @@ impl<'a> Stream<'a> {
         }
     }
 
-
+    pub fn demo_bachelor_presentation(&self) {
+        let mut frequency = 25;
+        for buffer in self.cyclic_buffer().audio_buffers() {
+            buffer.demo_sawtooth_wave_mono_48khz_16bit(frequency);
+            frequency *= 2;
+        }
+    }
 }
 
 

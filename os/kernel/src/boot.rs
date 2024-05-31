@@ -207,7 +207,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // Setup Intel HD Audio sound card
     init_ihda();
-    intel_hd_audio_device().demo();
+    intel_hd_audio_device().demo_bachelor_presentation();
     
     // Load initial ramdisk
     let initrd_tag = multiboot.module_tags()

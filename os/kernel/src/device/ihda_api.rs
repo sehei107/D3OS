@@ -89,6 +89,26 @@ impl IntelHDAudioDevice {
         stream.run();
     }
 
+    pub fn demo_bachelor_presentation(&self) {
+        let stream_format = StreamFormat::stereo_48khz_16bit();
+        let stream_id = 1;
+        let stream = &self.controller.prepare_output_stream(0, stream_format, 8, 512, stream_id);
+
+        stream.demo_bachelor_presentation();
+
+        // without this flush, there is no sound coming out of the line out jack, although all DMA pages used for the stream
+        // (for audio buffers and buffer descriptor list) were allocated with the NO_CACHE flag by the function "alloc_no_cache_dma_memory"
+        unsafe { asm!("wbinvd"); }
+
+        // the virtual sound card in QEMU and the physical sound card on the testing device both only had one codec, so the codec at index 0 gets auto-selected for now
+        let codec = self.codecs.get(0).unwrap();
+        self.controller.configure_codec_for_line_out_playback(codec, stream);
+
+        debug!("run in one second!");
+        Timer::wait(1000);
+        stream.run();
+    }
+
     fn connect_device_to_apic(interrupt_line: InterruptLine) {
         const X86_CPU_EXCEPTION_OFFSET: u8 = 32;
         let interrupt_vector = InterruptVector::try_from(X86_CPU_EXCEPTION_OFFSET + interrupt_line).unwrap();
